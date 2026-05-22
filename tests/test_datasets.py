@@ -91,3 +91,13 @@ def test_missing_image_size_keys_skipped():
     # Warning should mention the file
     msgs = ' '.join(warnings_logged)
     assert 'IMG_no_size' in msgs
+
+
+def test_difficult_sets_ignore_flag():
+    ds = _make_dataset()
+    a = next(d for d in ds.data_list if d['img_id'] == 'IMG_a')
+    flags = sorted(
+        i['ignore_flag'] for i in a['instances'] if i['bbox_label'] == 0)
+    # IMG_a 有两个 dc_line rectangle：一个 difficult=False, 一个 difficult=True
+    # (第三个角点重合的 rect 因 bbox 非法已被丢弃)
+    assert flags == [0, 1]
