@@ -7,7 +7,10 @@ The default implementation only does the register process. Users need to rename
 the ``CustomMetric`` to the real name of the metric and implement it.
 """  # noqa: E501
 
-from mmeval import BaseMetric
+try:
+    from mmeval import BaseMetric
+except ImportError:
+    BaseMetric = object  # type: ignore[assignment,misc]
 
 from mmaivision.registry import METRICS
 
