@@ -105,6 +105,8 @@ venv.bak/
 .mypy_cache/
 data/
 data
+!tests/data/
+!tests/data/**
 .vscode
 .idea
 .DS_Store

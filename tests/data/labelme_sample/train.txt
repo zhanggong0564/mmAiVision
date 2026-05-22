@@ -1,0 +1,4 @@
+# 注释行应被跳过
+IMG_a
+IMG_b
+IMG_corrupt
