@@ -169,7 +169,24 @@ shape 过滤规则：
    - `annotations/IMG_corrupt.json`：故意写成非法 JSON
    - `train.txt`：列出 IMG_a / IMG_b / IMG_corrupt 三个 stem
 
-5. **新建** `tests/test_datasets.py`，含以下用例：
+5. **新建** `tools/verify_dataset.py` — 验证 demo 脚本（参考 mmdet 的 `tools/misc/browse_dataset.py` 思路，但更轻）
+   - 用法：`python tools/verify_dataset.py <config> [--out-dir vis] [--num 5] [--split train]`
+   - 流程：
+     1. `Config.fromfile(config)` → 取 `cfg.train_dataloader.dataset`（`--split val` 时取 val）
+     2. `DATASETS.build(dataset_cfg)` 构建实例
+     3. 打印：`len(ds)`、`ds.metainfo['classes']`、按类 instance 计数（基于 `ds.data_list`，**不走 pipeline**）
+     4. 随机/前 `--num` 个样本：
+        - 打印 `data_info` 字典关键字段（img_path、height、width、instances 数量、前 3 个 bbox）
+        - 用 `cv2.imread(img_path)` 读图，画每个 instance：
+          - rectangle bbox 用绿色框
+          - polygon 额外用蓝色描边 `cv2.polylines`
+          - `ignore_flag=1` 的用灰色框 + "(diff)" 后缀
+          - label text 用 `cv2.putText` 标在 bbox 左上
+        - 保存到 `{out_dir}/{img_id}.jpg`
+   - 仅依赖 `opencv-python`（项目大概率已装；未装则 `ImportError` 时给出友好提示）
+   - **不走 pipeline**：直接读 `ds.data_list[i]` 拿原始 dict 渲染，避免被 transforms 缩放/翻转干扰，目的是验证 loader 本身
+
+6. **新建测试** `tests/test_datasets.py`，含以下用例：
    - `test_load_data_list_basic` — 样本数、img_path 拼接正确、height/width 从 JSON 正确读取
    - `test_bbox_from_rectangle_points_unordered` — 故意打乱 4 点顺序，bbox 仍是 [min_x, min_y, max_x, max_y]
    - `test_polygon_creates_mask_and_bbox` — polygon 同时产出 bbox + mask 字段；rectangle 不产出 mask 字段
@@ -227,12 +244,14 @@ setup.cfg
 
 1. **先做 scope 重命名**（§6.2）— 机械工作但影响所有 import，单独成步避免和功能改动混在一起难 review
 2. **再实现数据集**（§6.1 step 1-3）
-3. **写测试 fixture 和测试**（§6.1 step 4-5）
-4. **手工 smoke test**：用 `Config.fromfile('configs/_base_/dataset.py')` + `DATASETS.build(cfg.train_dataloader.dataset)` 验证可以 build，`len(ds)` 和 `ds[0]` 合理
+3. **写测试 fixture 和单元测试**（§6.1 step 4 + step 6）
+4. **写验证 demo**（§6.1 step 5）— 用真实数据跑一遍，保存可视化图片肉眼看 bbox/polygon 是否对齐
+5. **手工 smoke test**：用 `Config.fromfile('configs/_base_/dataset.py')` + `DATASETS.build(cfg.train_dataloader.dataset)` 验证可以 build，`len(ds)` 和 `ds[0]` 合理
 
 ## 8. 依赖
 
-只用 stdlib（`json`、`pathlib`、`logging`）。不新增外部依赖。
+- 数据集本身：只用 stdlib（`json`、`pathlib`、`logging`），不新增外部依赖
+- `tools/verify_dataset.py` 需要 `opencv-python`（项目通常已装；未装则 ImportError 时提示用户安装）
 
 ## 9. 风险与备选
 
