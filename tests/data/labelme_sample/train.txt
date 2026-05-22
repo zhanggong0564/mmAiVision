@@ -2,3 +2,4 @@
 IMG_a
 IMG_b
 IMG_corrupt
+IMG_no_size

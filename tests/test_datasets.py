@@ -18,7 +18,7 @@ def _make_dataset(**overrides):
         metainfo=dict(classes=('dc_line', 'fuse')),
         pipeline=[],
         lazy_init=False,
-        serialize_data=False,
+        serialize_data=False,  # 保留 data_list 在内存中，方便测试直接读取
     )
     kwargs.update(overrides)
     return LabelmeDetDataset(**kwargs)
@@ -69,3 +69,25 @@ def test_bbox_from_rectangle_points_unordered():
     x1, y1, x2, y2 = rect['bbox']
     assert x1 < x2 and y1 < y2
     assert (x1, y1, x2, y2) == (10.0, 20.0, 30.0, 40.0)
+
+
+def test_missing_image_size_keys_skipped():
+    """JSON missing imageHeight/imageWidth should be skipped, not crash."""
+    from unittest.mock import patch
+    from mmengine.logging import MMLogger
+
+    warnings_logged = []
+    original_warning = MMLogger.warning
+
+    def capture_warning(self, msg, *args, **kwargs):
+        warnings_logged.append(str(msg))
+        return original_warning(self, msg, *args, **kwargs)
+
+    with patch.object(MMLogger, 'warning', capture_warning):
+        ds = _make_dataset()
+
+    ids = {d['img_id'] for d in ds.data_list}
+    assert 'IMG_no_size' not in ids
+    # Warning should mention the file
+    msgs = ' '.join(warnings_logged)
+    assert 'IMG_no_size' in msgs

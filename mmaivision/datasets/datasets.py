@@ -2,7 +2,7 @@
 import json
 import os.path as osp
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 from mmengine.dataset import BaseDataset
 from mmengine.logging import MMLogger
@@ -38,7 +38,7 @@ class LabelmeDetDataset(BaseDataset):
             stem = Path(json_path).stem
             try:
                 data_info = self._parse_one(json_path, stem, img_dir, classes)
-            except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
+            except (FileNotFoundError, json.JSONDecodeError, OSError, KeyError) as e:
                 logger.warning(f'skip {json_path}: {e}')
                 continue
             data_list.append(data_info)
@@ -61,7 +61,7 @@ class LabelmeDetDataset(BaseDataset):
             return raw
         return osp.join(self.data_root, raw)
 
-    def _iter_ann_file_lines(self):
+    def _iter_ann_file_lines(self) -> Iterator[str]:
         with open(self.ann_file, 'r', encoding='utf-8') as f:
             for raw in f:
                 line = raw.strip()
@@ -76,7 +76,7 @@ class LabelmeDetDataset(BaseDataset):
         return osp.join(ann_dir, f'{stem_or_path}.json')
 
     def _parse_one(self, json_path: str, stem: str, img_dir: str,
-                   classes) -> Dict[str, Any]:
+                   classes: Sequence[str]) -> Dict[str, Any]:
         with open(json_path, 'r', encoding='utf-8') as f:
             obj = json.load(f)
 
@@ -99,7 +99,7 @@ class LabelmeDetDataset(BaseDataset):
         )
 
     def _parse_shape(self, shape: Dict[str, Any],
-                     classes) -> Optional[Dict[str, Any]]:
+                     classes: Sequence[str]) -> Optional[Dict[str, Any]]:
         label = shape.get('label')
         if label not in classes:
             return None
