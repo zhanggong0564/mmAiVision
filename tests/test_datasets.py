@@ -18,6 +18,7 @@ def _make_dataset(**overrides):
         metainfo=dict(classes=('dc_line', 'fuse')),
         pipeline=[],
         lazy_init=False,
+        serialize_data=False,
     )
     kwargs.update(overrides)
     return LabelmeDetDataset(**kwargs)
@@ -33,3 +34,38 @@ def test_missing_classes_raises():
             pipeline=[],
             lazy_init=False,
         )
+
+
+def test_load_data_list_basic():
+    ds = _make_dataset()
+    # IMG_corrupt.json 解析失败被跳过 → 余下 IMG_a + IMG_b 共 2 个样本
+    # IMG_b 暂时也保留（filter_empty_gt 由后续任务实现）
+    assert len(ds.data_list) == 2
+
+    a = next(d for d in ds.data_list if d['img_id'] == 'IMG_a')
+    assert a['img_path'] == osp.join(FIXTURE, 'images', 'IMG_a.jpg')
+    assert a['height'] == 1000
+    assert a['width'] == 1500
+
+    # rectangle bbox 来自 4 个角点 min/max
+    rect_instances = [
+        i for i in a['instances']
+        if i['bbox_label'] == 0 and i['ignore_flag'] == 0
+    ]
+    assert len(rect_instances) >= 1
+    bbox = rect_instances[0]['bbox']
+    # IMG_a.json 的第一个 dc_line rect：(10, 20, 30, 40)
+    assert bbox == [10.0, 20.0, 30.0, 40.0]
+
+
+def test_bbox_from_rectangle_points_unordered():
+    """fixture 中 IMG_a.json 第一个 rect 的 4 点是乱序的：
+    [[30,40],[10,40],[10,20],[30,20]]，bbox 应是 [10,20,30,40]。"""
+    ds = _make_dataset()
+    a = next(d for d in ds.data_list if d['img_id'] == 'IMG_a')
+    rect = next(
+        i for i in a['instances']
+        if i['bbox_label'] == 0 and i['ignore_flag'] == 0)
+    x1, y1, x2, y2 = rect['bbox']
+    assert x1 < x2 and y1 < y2
+    assert (x1, y1, x2, y2) == (10.0, 20.0, 30.0, 40.0)
