@@ -9,7 +9,7 @@ the ``CustomOptimizer`` to the real name of the optimizer and implement it.
 
 from torch.optim import Optimizer
 
-from mmengine_template.registry import OPTIMIZERS
+from mmaivision.registry import OPTIMIZERS
 
 
 @OPTIMIZERS.register_module()

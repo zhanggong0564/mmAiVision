@@ -19,7 +19,7 @@ except ImportError as e:
         'must implement the `__call__` method by yourself.')
     BaseTransform = object
 
-from mmengine_template.registry import TRANSFORMS
+from mmaivision.registry import TRANSFORMS
 
 
 @TRANSFORMS.register_module()

@@ -9,7 +9,7 @@ you can still customize the wrapper for some special requirements.
 The default implementation only does the register process. Users need to rename
 the ``CustomWrapper`` to the real name of the wrapper and implement it.
 """
-from mmengine_template.registry import MODEL_WRAPPERS
+from mmaivision.registry import MODEL_WRAPPERS
 
 
 @MODEL_WRAPPERS.register_module()

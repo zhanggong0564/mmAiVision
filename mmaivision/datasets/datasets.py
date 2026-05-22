@@ -24,7 +24,7 @@ the ``CustomDataset`` to the real name of the target dataset, for example,
 
 from mmengine.dataset import BaseDataset
 
-from mmengine_template.registry import DATASETS
+from mmaivision.registry import DATASETS
 
 
 @DATASETS.register_module()

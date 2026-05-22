@@ -9,7 +9,7 @@ the ``CustomOptimWrapper`` to the real name of the optimizer and implement it.
 """
 from mmengine.optim import OptimWrapper
 
-from mmengine_template.registry import OPTIM_WRAPPERS
+from mmaivision.registry import OPTIM_WRAPPERS
 
 
 @OPTIM_WRAPPERS.register_module()

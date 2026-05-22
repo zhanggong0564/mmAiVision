@@ -1,6 +1,6 @@
 """This module is used to patch the default Evaluator in MMEngine.
 
-For the convenient of customizing the Metric, ``mmengine_template`` patch
+For the convenient of customizing the Metric, ``mmaivision`` patch
 the ``mmengine.evaluator.Evaluator`` with the local ``Evaluator`` Thanks to
 this, the Metric in mmengine-template only needs to implement the ``add`` and
 ``compute_metric``.
@@ -15,7 +15,7 @@ Warning:
 from mmengine.evaluator import Evaluator as MMEngineEvaluator
 from mmengine.structures import BaseDataElement
 
-from mmengine_template.registry import EVALUATOR
+from mmaivision.registry import EVALUATOR
 
 
 @EVALUATOR.register_module()

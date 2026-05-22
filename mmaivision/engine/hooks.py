@@ -6,7 +6,7 @@ the ``CustomHook`` to the real name of the hook and implement it.
 
 from mmengine.hooks import Hook
 
-from mmengine_template.registry import HOOKS
+from mmaivision.registry import HOOKS
 
 
 @HOOKS.register_module()

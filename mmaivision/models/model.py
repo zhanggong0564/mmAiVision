@@ -8,7 +8,7 @@ the ``CustomModel`` to the real name of the model and implement it.
 """  # noqa: E501
 from mmengine.model import BaseModel
 
-from mmengine_template.registry import MODELS
+from mmaivision.registry import MODELS
 
 
 @MODELS.register_module()

@@ -9,7 +9,7 @@ the ``CustomMetric`` to the real name of the metric and implement it.
 
 from mmeval import BaseMetric
 
-from mmengine_template.registry import METRICS
+from mmaivision.registry import METRICS
 
 
 @METRICS.register_module()

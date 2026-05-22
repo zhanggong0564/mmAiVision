@@ -1,5 +1,5 @@
 # define scope here.
-default_scope = 'mmengine_template'
+default_scope = 'mmaivision'
 
 default_hooks = dict(
     timer=dict(type='IterTimerHook'),

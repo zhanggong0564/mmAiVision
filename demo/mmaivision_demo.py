@@ -2,7 +2,7 @@ from argparse import ArgumentParser
 
 from mmengine.registry import DefaultScope
 
-from mmengine_template.infer import CustomInferencer
+from mmaivision.infer import CustomInferencer
 
 
 def parse_args():
@@ -20,7 +20,7 @@ def parse_args():
 
 def main(args):
     DefaultScope.get_instance(
-        name='mmengine_template', scope_name='mmengine_template')
+        name='mmaivision', scope_name='mmaivision')
     inferencer = CustomInferencer(
         args.config, args.checkpoint, save_path=args.out_file)
     inferencer(args.img, vis_thresh=0.8)

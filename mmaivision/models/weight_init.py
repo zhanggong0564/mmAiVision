@@ -9,7 +9,7 @@ the ``CustomInitializer`` to the real name of the initializer and implement it.
 
 from mmengine.model.weight_init import BaseInit
 
-from mmengine_template.registry import WEIGHT_INITIALIZERS
+from mmaivision.registry import WEIGHT_INITIALIZERS
 
 
 @WEIGHT_INITIALIZERS.register_module()
