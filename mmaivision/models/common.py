@@ -11,7 +11,10 @@ def autopad(k: Union[int, List[int]],
             d: int = 1) -> Union[int, List[int]]:
     """Same-padding 计算,支持 dilation。"""
     if d > 1:
-        k = d * (k - 1) + 1 if isinstance(k, int) else [d * (x - 1) + 1 for x in k]
+        if isinstance(k, int):
+            k = d * (k - 1) + 1
+        else:
+            k = [d * (x - 1) + 1 for x in k]
     if p is None:
         p = k // 2 if isinstance(k, int) else [x // 2 for x in k]
     return p
@@ -36,3 +39,35 @@ class Conv(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.act(self.bn(self.conv(x)))
+
+
+class Bottleneck(nn.Module):
+    """标准 bottleneck: 1x1 + 3x3 + 可选 shortcut。"""
+
+    def __init__(self, c1: int, c2: int, shortcut: bool = True,
+                 g: int = 1, e: float = 0.5):
+        super().__init__()
+        c_ = int(c2 * e)
+        self.cv1 = Conv(c1, c_, k=1, s=1)
+        self.cv2 = Conv(c_, c2, k=3, s=1, g=g)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
+
+class C3(nn.Module):
+    """CSP Bottleneck with 3 convolutions。"""
+
+    def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = True,
+                 g: int = 1, e: float = 0.5):
+        super().__init__()
+        c_ = int(c2 * e)
+        self.cv1 = Conv(c1, c_, k=1, s=1)
+        self.cv2 = Conv(c1, c_, k=1, s=1)
+        self.cv3 = Conv(2 * c_, c2, k=1)
+        self.m = nn.Sequential(*(
+            Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.cv3(torch.cat((self.m(self.cv1(x)), self.cv2(x)), dim=1))

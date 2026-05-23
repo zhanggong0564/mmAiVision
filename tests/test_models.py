@@ -21,3 +21,17 @@ class TestConv:
         out = layer(torch.randn(1, 3, 8, 8))
         assert out.shape == (1, 16, 8, 8)
         assert isinstance(layer.act, nn.Identity)
+
+
+class TestC3:
+    def test_c3_shape_shortcut(self):
+        from mmaivision.models.common import C3
+        layer = C3(64, 64, n=2, shortcut=True)
+        out = layer(torch.randn(1, 64, 32, 32))
+        assert out.shape == (1, 64, 32, 32)
+
+    def test_c3_shape_no_shortcut(self):
+        from mmaivision.models.common import C3
+        layer = C3(32, 64, n=1, shortcut=False)
+        out = layer(torch.randn(1, 32, 16, 16))
+        assert out.shape == (1, 64, 16, 16)
