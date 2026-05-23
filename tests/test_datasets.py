@@ -186,3 +186,22 @@ def test_min_size_default_keeps_small():
     a = next(d for d in ds.data_list if d['img_id'] == 'IMG_a')
     # 默认应保留 3 个有效 instance
     assert len(a['instances']) == 3
+
+
+def test_filter_empty_gt_train_mode():
+    ds = _make_dataset(filter_cfg=dict(filter_empty_gt=True, min_size=1))
+    ids = {ds.get_data_info(i)['img_id'] for i in range(len(ds))}
+    # IMG_b 无 instance，train 模式应被过滤
+    assert 'IMG_b' not in ids
+    assert 'IMG_a' in ids
+
+
+def test_filter_empty_gt_test_mode_keeps_all():
+    ds = _make_dataset(
+        filter_cfg=dict(filter_empty_gt=True, min_size=1),
+        test_mode=True,
+    )
+    ids = {ds.get_data_info(i)['img_id'] for i in range(len(ds))}
+    # test 模式应保留 IMG_b（虽然 0 instance）
+    assert 'IMG_b' in ids
+    assert 'IMG_a' in ids

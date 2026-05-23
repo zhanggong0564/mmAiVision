@@ -59,6 +59,21 @@ class LabelmeDetDataset(BaseDataset):
             f'loaded {len(data_list)} samples from {self.ann_file}')
         return data_list
 
+    def filter_data(self) -> List[Dict[str, Any]]:
+        """根据 filter_cfg 过滤 data_list。
+
+        - test_mode=True 时不过滤
+        - filter_cfg['filter_empty_gt']=True 时丢掉 0 instance 的样本
+        """
+        if self.test_mode:
+            return self.data_list
+
+        filter_cfg = self.filter_cfg or {}
+        if not filter_cfg.get('filter_empty_gt', False):
+            return self.data_list
+
+        return [d for d in self.data_list if len(d['instances']) > 0]
+
     def _resolve_prefix_dir(self, key: str) -> str:
         """从 self.data_prefix 取出目录，已是绝对路径则直接返回。
 
