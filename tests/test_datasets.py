@@ -140,3 +140,18 @@ def test_unknown_label_skipped():
     # 汇总 warning 应包含 unknown label 计数
     msgs = ' '.join(call.args[0] for call in mock_warn.call_args_list)
     assert 'unknown' in msgs.lower()
+
+
+def test_invalid_shape_type_skipped():
+    """shape_type 既不是 rectangle 也不是 polygon 的 shape 应被跳过，
+    并在汇总 warning 中体现。"""
+    from unittest.mock import patch
+
+    with patch('mmengine.logging.MMLogger.warning') as mock_warn:
+        ds = _make_dataset()
+    a = next(d for d in ds.data_list if d['img_id'] == 'IMG_a')
+    # IMG_a 含一个 shape_type='circle' 的 dc_line，应被跳过
+    # IMG_a 有效实例：两个 rectangle (含 difficult) + 一个 fuse polygon = 3 个
+    assert len(a['instances']) == 3
+    msgs = ' '.join(call.args[0] for call in mock_warn.call_args_list)
+    assert 'shape_type' in msgs.lower() or 'unsupported' in msgs.lower()
