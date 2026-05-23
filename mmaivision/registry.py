@@ -104,7 +104,10 @@ EVALUATOR = Registry(
 # modules below, therefore locations are not specified for Registry.
 
 # manage task-specific modules like anchor generators and box coders
-TASK_UTILS = Registry('task util', parent=MMENGINE_TASK_UTILS)
+TASK_UTILS = Registry(
+    'task util',
+    parent=MMENGINE_TASK_UTILS,
+    locations=['mmaivision.models.yolov5.task_utils'])
 
 # manage visualizer
 VISUALIZERS = Registry('visualizer', parent=MMENGINE_VISUALIZERS)
