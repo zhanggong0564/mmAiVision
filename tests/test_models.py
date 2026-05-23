@@ -111,3 +111,36 @@ class TestNeck:
         with pytest.raises(AssertionError):
             YOLOv5PAFPN(in_channels=(128, 256), out_channels=(128, 256),
                         deepen_factor=0.33, widen_factor=0.5)
+
+
+class TestHead:
+    def test_head_forward_shapes(self):
+        from mmaivision.models.head import YOLOv5Head
+        head = YOLOv5Head(
+            num_classes=80,
+            in_channels=(128, 256, 512),
+            num_base_priors=3)
+        feats = (
+            torch.randn(2, 128, 80, 80),
+            torch.randn(2, 256, 40, 40),
+            torch.randn(2, 512, 20, 20),
+        )
+        outs = head(feats)
+        assert len(outs) == 3
+        # num_base_priors * (num_classes + 5) = 3 * 85 = 255
+        assert outs[0].shape == (2, 255, 80, 80)
+        assert outs[1].shape == (2, 255, 40, 40)
+        assert outs[2].shape == (2, 255, 20, 20)
+
+    def test_head_invalid_args_raises(self):
+        from mmaivision.models.head import YOLOv5Head
+        with pytest.raises(ValueError):
+            YOLOv5Head(num_classes=0, in_channels=(128, 256, 512))
+        with pytest.raises(ValueError):
+            YOLOv5Head(num_classes=80, in_channels=(128, 256, 512),
+                       num_base_priors=0)
+
+    def test_head_wrong_in_channels_len_raises(self):
+        from mmaivision.models.head import YOLOv5Head
+        with pytest.raises(AssertionError):
+            YOLOv5Head(num_classes=80, in_channels=(128, 256))
