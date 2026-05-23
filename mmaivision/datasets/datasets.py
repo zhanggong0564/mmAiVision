@@ -28,6 +28,9 @@ class LabelmeDetDataset(BaseDataset):
                 'classes must be specified via metainfo, e.g. '
                 "metainfo=dict(classes=('dc_line', ...))")
 
+        filter_cfg = self.filter_cfg or {}
+        min_size = int(filter_cfg.get('min_size', 1))
+
         logger = MMLogger.get_current_instance()
         data_list: List[Dict[str, Any]] = []
         counters: Dict[str, int] = dict(
@@ -40,7 +43,7 @@ class LabelmeDetDataset(BaseDataset):
             stem = Path(json_path).stem
             try:
                 data_info = self._parse_one(
-                    json_path, stem, img_dir, classes, counters)
+                    json_path, stem, img_dir, classes, counters, min_size)
             except (FileNotFoundError, json.JSONDecodeError, OSError,
                     KeyError) as e:
                 logger.warning(f'skip {json_path}: {e}')
@@ -86,7 +89,8 @@ class LabelmeDetDataset(BaseDataset):
 
     def _parse_one(self, json_path: str, stem: str, img_dir: str,
                    classes: Sequence[str],
-                   counters: Dict[str, int]) -> Dict[str, Any]:
+                   counters: Dict[str, int],
+                   min_size: int) -> Dict[str, Any]:
         with open(json_path, 'r', encoding='utf-8') as f:
             obj = json.load(f)
 
@@ -96,7 +100,7 @@ class LabelmeDetDataset(BaseDataset):
 
         instances: List[Dict[str, Any]] = []
         for shape in obj.get('shapes', []):
-            inst = self._parse_shape(shape, classes, counters)
+            inst = self._parse_shape(shape, classes, counters, min_size)
             if inst is not None:
                 instances.append(inst)
 
@@ -109,7 +113,8 @@ class LabelmeDetDataset(BaseDataset):
         )
 
     def _parse_shape(self, shape: Dict[str, Any], classes: Sequence[str],
-                     counters: Dict[str, int]) -> Optional[Dict[str, Any]]:
+                     counters: Dict[str, int],
+                     min_size: int) -> Optional[Dict[str, Any]]:
         label = shape.get('label')
         if label not in classes:
             counters['unknown_label'] += 1
@@ -126,7 +131,7 @@ class LabelmeDetDataset(BaseDataset):
             return None
         x1, x2 = min(xs), max(xs)
         y1, y2 = min(ys), max(ys)
-        if (x2 - x1) <= 0 or (y2 - y1) <= 0:
+        if (x2 - x1) < min_size or (y2 - y1) < min_size:
             counters['bad_bbox'] += 1
             return None
         inst: Dict[str, Any] = dict(

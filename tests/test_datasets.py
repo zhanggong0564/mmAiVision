@@ -169,3 +169,20 @@ def test_corrupt_json_skipped_not_raised():
     # 应有警告日志含 IMG_corrupt 路径
     msgs = ' '.join(call.args[0] for call in mock_warn.call_args_list)
     assert 'IMG_corrupt' in msgs
+
+
+def test_min_size_filter():
+    # 把 min_size 设大到把 IMG_a 第一个 (10,20,30,40) rect 也过滤掉
+    # bbox 宽 = 20, 高 = 20，min_size=25 应该把它丢掉
+    ds = _make_dataset(filter_cfg=dict(filter_empty_gt=False, min_size=25))
+    a = next(d for d in ds.data_list if d['img_id'] == 'IMG_a')
+    for inst in a['instances']:
+        x1, y1, x2, y2 = inst['bbox']
+        assert (x2 - x1) >= 25 and (y2 - y1) >= 25
+
+
+def test_min_size_default_keeps_small():
+    ds = _make_dataset()  # 默认 min_size=1
+    a = next(d for d in ds.data_list if d['img_id'] == 'IMG_a')
+    # 默认应保留 3 个有效 instance
+    assert len(a['instances']) == 3
