@@ -57,3 +57,31 @@ class TestBackbone:
         assert feats[0].shape == (2, 128, 80, 80)   # P3, stride 8
         assert feats[1].shape == (2, 256, 40, 40)   # P4, stride 16
         assert feats[2].shape == (2, 512, 20, 20)   # P5, stride 32
+
+    @pytest.mark.parametrize('variant,deepen,widen,expected_c', [
+        ('n', 0.33, 0.25, (64, 128, 256)),
+        ('s', 0.33, 0.50, (128, 256, 512)),
+        ('m', 0.67, 0.75, (192, 384, 768)),
+        ('l', 1.00, 1.00, (256, 512, 1024)),
+        ('x', 1.33, 1.25, (320, 640, 1280)),
+    ])
+    def test_backbone_all_variants(self, variant, deepen, widen, expected_c):
+        from mmaivision.models.backbone import YOLOv5CSPDarknet
+        bb = YOLOv5CSPDarknet(deepen_factor=deepen, widen_factor=widen)
+        feats = bb(torch.randn(1, 3, 320, 320))
+        assert feats[0].shape[1] == expected_c[0], f'{variant} P3 channels'
+        assert feats[1].shape[1] == expected_c[1], f'{variant} P4 channels'
+        assert feats[2].shape[1] == expected_c[2], f'{variant} P5 channels'
+
+    def test_backbone_invalid_factor_raises(self):
+        from mmaivision.models.backbone import YOLOv5CSPDarknet
+        with pytest.raises(ValueError, match='必须 > 0'):
+            YOLOv5CSPDarknet(deepen_factor=0, widen_factor=0.5)
+        with pytest.raises(ValueError, match='必须 > 0'):
+            YOLOv5CSPDarknet(deepen_factor=0.33, widen_factor=-1)
+
+    def test_backbone_invalid_out_indices_raises(self):
+        from mmaivision.models.backbone import YOLOv5CSPDarknet
+        with pytest.raises(ValueError, match='out_indices'):
+            YOLOv5CSPDarknet(deepen_factor=0.33, widen_factor=0.5,
+                             out_indices=(0, 1, 2))
