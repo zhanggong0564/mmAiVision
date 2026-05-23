@@ -35,3 +35,11 @@ class TestC3:
         layer = C3(32, 64, n=1, shortcut=False)
         out = layer(torch.randn(1, 32, 16, 16))
         assert out.shape == (1, 64, 16, 16)
+
+
+class TestSPPF:
+    def test_sppf_shape(self):
+        from mmaivision.models.common import SPPF
+        layer = SPPF(64, 64, k=5)
+        out = layer(torch.randn(1, 64, 32, 32))
+        assert out.shape == (1, 64, 32, 32)

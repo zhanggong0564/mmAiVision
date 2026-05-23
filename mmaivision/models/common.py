@@ -71,3 +71,20 @@ class C3(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.cv3(torch.cat((self.m(self.cv1(x)), self.cv2(x)), dim=1))
+
+
+class SPPF(nn.Module):
+    """快速 SPP,3 次串行 maxpool 替代 SPP 的并行 5/9/13。"""
+
+    def __init__(self, c1: int, c2: int, k: int = 5):
+        super().__init__()
+        c_ = c1 // 2
+        self.cv1 = Conv(c1, c_, k=1, s=1)
+        self.cv2 = Conv(c_ * 4, c2, k=1, s=1)
+        self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.cv1(x)
+        y1 = self.m(x)
+        y2 = self.m(y1)
+        return self.cv2(torch.cat((x, y1, y2, self.m(y2)), dim=1))
