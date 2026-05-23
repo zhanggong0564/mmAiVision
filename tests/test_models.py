@@ -43,3 +43,17 @@ class TestSPPF:
         layer = SPPF(64, 64, k=5)
         out = layer(torch.randn(1, 64, 32, 32))
         assert out.shape == (1, 64, 32, 32)
+
+
+class TestBackbone:
+    def test_backbone_forward_shapes_s(self):
+        """yolov5s: deepen=0.33, widen=0.5。"""
+        from mmaivision.models.backbone import YOLOv5CSPDarknet
+        bb = YOLOv5CSPDarknet(deepen_factor=0.33, widen_factor=0.5)
+        feats = bb(torch.randn(2, 3, 640, 640))
+        assert len(feats) == 3
+        # 基础通道 [64,128,256,512,1024] * 0.5 -> make_divisible/8
+        # P3=256*0.5=128, P4=512*0.5=256, P5=1024*0.5=512
+        assert feats[0].shape == (2, 128, 80, 80)   # P3, stride 8
+        assert feats[1].shape == (2, 256, 40, 40)   # P4, stride 16
+        assert feats[2].shape == (2, 512, 20, 20)   # P5, stride 32
