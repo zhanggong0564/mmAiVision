@@ -30,6 +30,8 @@ class LabelmeDetDataset(BaseDataset):
 
         logger = MMLogger.get_current_instance()
         data_list: List[Dict[str, Any]] = []
+        counters: Dict[str, int] = dict(
+            unknown_label=0, bad_type=0, bad_bbox=0)
         ann_dir = self._resolve_prefix_dir('ann')
         img_dir = self._resolve_prefix_dir('img')
 
@@ -37,12 +39,19 @@ class LabelmeDetDataset(BaseDataset):
             json_path = self._resolve_json_path(stem_or_path, ann_dir)
             stem = Path(json_path).stem
             try:
-                data_info = self._parse_one(json_path, stem, img_dir, classes)
-            except (FileNotFoundError, json.JSONDecodeError, OSError, KeyError) as e:
+                data_info = self._parse_one(
+                    json_path, stem, img_dir, classes, counters)
+            except (FileNotFoundError, json.JSONDecodeError, OSError,
+                    KeyError) as e:
                 logger.warning(f'skip {json_path}: {e}')
                 continue
             data_list.append(data_info)
 
+        if any(counters.values()):
+            logger.warning(
+                f'skipped {counters["unknown_label"]} shapes with unknown '
+                f'labels, {counters["bad_type"]} with unsupported '
+                f'shape_type, {counters["bad_bbox"]} with invalid bbox')
         logger.info(
             f'loaded {len(data_list)} samples from {self.ann_file}')
         return data_list
@@ -76,7 +85,8 @@ class LabelmeDetDataset(BaseDataset):
         return osp.join(ann_dir, f'{stem_or_path}.json')
 
     def _parse_one(self, json_path: str, stem: str, img_dir: str,
-                   classes: Sequence[str]) -> Dict[str, Any]:
+                   classes: Sequence[str],
+                   counters: Dict[str, int]) -> Dict[str, Any]:
         with open(json_path, 'r', encoding='utf-8') as f:
             obj = json.load(f)
 
@@ -86,7 +96,7 @@ class LabelmeDetDataset(BaseDataset):
 
         instances: List[Dict[str, Any]] = []
         for shape in obj.get('shapes', []):
-            inst = self._parse_shape(shape, classes)
+            inst = self._parse_shape(shape, classes, counters)
             if inst is not None:
                 instances.append(inst)
 
@@ -98,22 +108,26 @@ class LabelmeDetDataset(BaseDataset):
             instances=instances,
         )
 
-    def _parse_shape(self, shape: Dict[str, Any],
-                     classes: Sequence[str]) -> Optional[Dict[str, Any]]:
+    def _parse_shape(self, shape: Dict[str, Any], classes: Sequence[str],
+                     counters: Dict[str, int]) -> Optional[Dict[str, Any]]:
         label = shape.get('label')
         if label not in classes:
+            counters['unknown_label'] += 1
             return None
         shape_type = shape.get('shape_type')
         if shape_type not in ('rectangle', 'polygon'):
+            counters['bad_type'] += 1
             return None
         points = shape.get('points', [])
         xs = [float(p[0]) for p in points]
         ys = [float(p[1]) for p in points]
         if not xs or not ys:
+            counters['bad_bbox'] += 1
             return None
         x1, x2 = min(xs), max(xs)
         y1, y2 = min(ys), max(ys)
         if (x2 - x1) <= 0 or (y2 - y1) <= 0:
+            counters['bad_bbox'] += 1
             return None
         inst: Dict[str, Any] = dict(
             bbox=[x1, y1, x2, y2],

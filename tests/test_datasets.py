@@ -126,3 +126,17 @@ def test_polygon_creates_mask_and_bbox():
         if i['bbox_label'] == 0 and i['ignore_flag'] == 0
     ]
     assert all('mask' not in r for r in rects)
+
+
+def test_unknown_label_skipped():
+    """未知 label 应被跳过，并在加载结束时输出汇总 warning。"""
+    from unittest.mock import patch
+
+    with patch('mmengine.logging.MMLogger.warning') as mock_warn:
+        ds = _make_dataset()
+    a = next(d for d in ds.data_list if d['img_id'] == 'IMG_a')
+    # 未知 label "unknown_thing" 不应出现在任何 instance
+    assert all(i['bbox_label'] in (0, 1) for i in a['instances'])
+    # 汇总 warning 应包含 unknown label 计数
+    msgs = ' '.join(call.args[0] for call in mock_warn.call_args_list)
+    assert 'unknown' in msgs.lower()
