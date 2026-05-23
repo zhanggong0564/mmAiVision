@@ -85,3 +85,29 @@ class TestBackbone:
         with pytest.raises(ValueError, match='out_indices'):
             YOLOv5CSPDarknet(deepen_factor=0.33, widen_factor=0.5,
                              out_indices=(0, 1, 2))
+
+
+class TestNeck:
+    def test_neck_forward_shapes(self):
+        """s 变体 neck: 输入三层 (128,256,512) → 输出三层同 shape。"""
+        from mmaivision.models.neck import YOLOv5PAFPN
+        neck = YOLOv5PAFPN(
+            in_channels=(128, 256, 512),
+            out_channels=(128, 256, 512),
+            deepen_factor=0.33, widen_factor=0.5)
+        feats = (
+            torch.randn(2, 128, 80, 80),
+            torch.randn(2, 256, 40, 40),
+            torch.randn(2, 512, 20, 20),
+        )
+        outs = neck(feats)
+        assert len(outs) == 3
+        assert outs[0].shape == (2, 128, 80, 80)
+        assert outs[1].shape == (2, 256, 40, 40)
+        assert outs[2].shape == (2, 512, 20, 20)
+
+    def test_neck_wrong_in_channels_len_raises(self):
+        from mmaivision.models.neck import YOLOv5PAFPN
+        with pytest.raises(AssertionError):
+            YOLOv5PAFPN(in_channels=(128, 256), out_channels=(128, 256),
+                        deepen_factor=0.33, widen_factor=0.5)
