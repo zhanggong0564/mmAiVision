@@ -75,18 +75,14 @@ class LabelmeDetDataset(BaseDataset):
         return [d for d in self.data_list if len(d['instances']) > 0]
 
     def _resolve_prefix_dir(self, key: str) -> str:
-        """从 self.data_prefix 取出目录，已是绝对路径则直接返回。
+        """Return the directory under data_prefix[key].
 
-        BaseDataset._join_prefix 在某些版本里会把 data_prefix 的值与
-        data_root 自动拼接成绝对路径，再次拼会变成双重 join。这里做
-        防御性判断：仅当返回值还是相对路径时才拼 data_root。
+        BaseDataset._join_prefix in __init__ already joined this value
+        with data_root, so we just return it as-is. Fall back to
+        data_root if the key is absent.
         """
         raw = (self.data_prefix or {}).get(key, '')
-        if not raw:
-            return self.data_root
-        if osp.isabs(raw):
-            return raw
-        return osp.join(self.data_root, raw)
+        return raw or self.data_root
 
     def _iter_ann_file_lines(self) -> Iterator[str]:
         with open(self.ann_file, 'r', encoding='utf-8') as f:
