@@ -155,3 +155,17 @@ def test_invalid_shape_type_skipped():
     assert len(a['instances']) == 3
     msgs = ' '.join(call.args[0] for call in mock_warn.call_args_list)
     assert 'shape_type' in msgs.lower() or 'unsupported' in msgs.lower()
+
+
+def test_corrupt_json_skipped_not_raised():
+    """损坏的 JSON 不应抛异常，应被跳过并在 warning 中提及文件路径。"""
+    from unittest.mock import patch
+
+    with patch('mmengine.logging.MMLogger.warning') as mock_warn:
+        ds = _make_dataset()
+    ids = {d['img_id'] for d in ds.data_list}
+    # IMG_corrupt 不应出现在 data_list 中
+    assert 'IMG_corrupt' not in ids
+    # 应有警告日志含 IMG_corrupt 路径
+    msgs = ' '.join(call.args[0] for call in mock_warn.call_args_list)
+    assert 'IMG_corrupt' in msgs
