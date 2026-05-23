@@ -104,7 +104,7 @@ class LabelmeDetDataset(BaseDataset):
         if label not in classes:
             return None
         shape_type = shape.get('shape_type')
-        if shape_type != 'rectangle':
+        if shape_type not in ('rectangle', 'polygon'):
             return None
         points = shape.get('points', [])
         xs = [float(p[0]) for p in points]
@@ -115,8 +115,12 @@ class LabelmeDetDataset(BaseDataset):
         y1, y2 = min(ys), max(ys)
         if (x2 - x1) <= 0 or (y2 - y1) <= 0:
             return None
-        return dict(
+        inst: Dict[str, Any] = dict(
             bbox=[x1, y1, x2, y2],
             bbox_label=classes.index(label),
             ignore_flag=int(shape.get('difficult', False)),
         )
+        if shape_type == 'polygon':
+            flat = [coord for xy in zip(xs, ys) for coord in xy]
+            inst['mask'] = [flat]
+        return inst

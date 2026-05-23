@@ -101,3 +101,28 @@ def test_difficult_sets_ignore_flag():
     # IMG_a 有两个 dc_line rectangle：一个 difficult=False, 一个 difficult=True
     # (第三个角点重合的 rect 因 bbox 非法已被丢弃)
     assert flags == [0, 1]
+
+
+def test_polygon_creates_mask_and_bbox():
+    ds = _make_dataset()
+    a = next(d for d in ds.data_list if d['img_id'] == 'IMG_a')
+    polys = [i for i in a['instances'] if i['bbox_label'] == 1]
+    # fixture: 一个 fuse polygon
+    assert len(polys) == 1
+    p = polys[0]
+    # bbox 来自所有点的 min/max；IMG_a fuse points:
+    # [[100,100],[120,100],[130,110],[110,120],[90,110]]
+    assert p['bbox'] == [90.0, 100.0, 130.0, 120.0]
+    # mask: List[List[float]]，外层一段 polygon
+    assert 'mask' in p
+    assert isinstance(p['mask'], list) and len(p['mask']) == 1
+    flat = p['mask'][0]
+    assert flat == [100.0, 100.0, 120.0, 100.0, 130.0, 110.0,
+                    110.0, 120.0, 90.0, 110.0]
+
+    # rectangle 不应有 mask 字段
+    rects = [
+        i for i in a['instances']
+        if i['bbox_label'] == 0 and i['ignore_flag'] == 0
+    ]
+    assert all('mask' not in r for r in rects)
