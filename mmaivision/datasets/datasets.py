@@ -1,6 +1,7 @@
 """LabelmeDetDataset: 加载 X-AnyLabeling / Labelme 风格 JSON 标注的目标检测数据集。"""
 import json
 import os.path as osp
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence
 
@@ -55,8 +56,13 @@ class LabelmeDetDataset(BaseDataset):
                 f'skipped {counters["unknown_label"]} shapes with unknown '
                 f'labels, {counters["bad_type"]} with unsupported '
                 f'shape_type, {counters["bad_bbox"]} with invalid bbox')
+        n_instances = sum(len(d['instances']) for d in data_list)
+        per_class = Counter(
+            classes[i['bbox_label']]
+            for d in data_list for i in d['instances'])
         logger.info(
-            f'loaded {len(data_list)} samples from {self.ann_file}')
+            f'loaded {len(data_list)} samples, {n_instances} instances; '
+            f'per-class counts: {dict(per_class)}')
         return data_list
 
     def filter_data(self) -> List[Dict[str, Any]]:
@@ -142,6 +148,9 @@ class LabelmeDetDataset(BaseDataset):
             return None
         x1, x2 = min(xs), max(xs)
         y1, y2 = min(ys), max(ys)
+        if (x2 - x1) <= 0 or (y2 - y1) <= 0:
+            counters['bad_bbox'] += 1
+            return None
         if (x2 - x1) < min_size or (y2 - y1) < min_size:
             counters['bad_bbox'] += 1
             return None
