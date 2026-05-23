@@ -144,3 +144,40 @@ class TestHead:
         from mmaivision.models.head import YOLOv5Head
         with pytest.raises(AssertionError):
             YOLOv5Head(num_classes=80, in_channels=(128, 256))
+
+
+class TestDetector:
+    def _build(self):
+        from mmaivision.registry import MODELS
+        return MODELS.build(dict(
+            type='YOLOv5Detector',
+            backbone=dict(type='YOLOv5CSPDarknet',
+                          deepen_factor=0.33, widen_factor=0.5),
+            neck=dict(type='YOLOv5PAFPN',
+                      in_channels=(128, 256, 512),
+                      out_channels=(128, 256, 512),
+                      deepen_factor=0.33, widen_factor=0.5),
+            head=dict(type='YOLOv5Head',
+                      num_classes=80,
+                      in_channels=(128, 256, 512)),
+        ))
+
+    def test_detector_tensor_mode_end_to_end(self):
+        # 直接调 .forward 跳过 BaseModel.__call__ 的 data_preprocessor 包装,
+        # 这一轮不验证 data_preprocessor 路径。
+        model = self._build()
+        preds = model.forward(torch.randn(2, 3, 640, 640), mode='tensor')
+        assert len(preds) == 3
+        assert preds[0].shape == (2, 255, 80, 80)
+        assert preds[1].shape == (2, 255, 40, 40)
+        assert preds[2].shape == (2, 255, 20, 20)
+
+    def test_detector_loss_mode_raises(self):
+        model = self._build()
+        with pytest.raises(NotImplementedError, match='loss'):
+            model.forward(torch.randn(1, 3, 640, 640), mode='loss')
+
+    def test_detector_predict_mode_raises(self):
+        model = self._build()
+        with pytest.raises(NotImplementedError, match='predict'):
+            model.forward(torch.randn(1, 3, 640, 640), mode='predict')

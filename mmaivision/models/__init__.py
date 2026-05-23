@@ -1,4 +1,5 @@
 from .backbone import YOLOv5CSPDarknet
+from .detector import YOLOv5Detector
 from .head import YOLOv5Head
 from .model import CustomModel
 from .neck import YOLOv5PAFPN
@@ -7,5 +8,5 @@ from .wrappers import CustomWrapper
 
 __all__ = [
     'CustomModel', 'WEIGHT_INITIALIZERS', 'CustomWrapper',
-    'YOLOv5CSPDarknet', 'YOLOv5PAFPN', 'YOLOv5Head',
+    'YOLOv5CSPDarknet', 'YOLOv5PAFPN', 'YOLOv5Head', 'YOLOv5Detector',
 ]
