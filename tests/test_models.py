@@ -6,7 +6,7 @@ from torch import nn
 
 class TestConv:
     def test_conv_shape(self):
-        from mmaivision.models.common import Conv
+        from mmaivision.models.yolov5.common import Conv
         layer = Conv(3, 16, k=3, s=2)
         out = layer(torch.randn(1, 3, 64, 64))
         assert out.shape == (1, 16, 32, 32)
@@ -16,7 +16,7 @@ class TestConv:
         assert isinstance(layer.act, nn.SiLU)
 
     def test_conv_no_act(self):
-        from mmaivision.models.common import Conv
+        from mmaivision.models.yolov5.common import Conv
         layer = Conv(3, 16, k=1, s=1, act=False)
         out = layer(torch.randn(1, 3, 8, 8))
         assert out.shape == (1, 16, 8, 8)
@@ -25,13 +25,13 @@ class TestConv:
 
 class TestC3:
     def test_c3_shape_shortcut(self):
-        from mmaivision.models.common import C3
+        from mmaivision.models.yolov5.common import C3
         layer = C3(64, 64, n=2, shortcut=True)
         out = layer(torch.randn(1, 64, 32, 32))
         assert out.shape == (1, 64, 32, 32)
 
     def test_c3_shape_no_shortcut(self):
-        from mmaivision.models.common import C3
+        from mmaivision.models.yolov5.common import C3
         layer = C3(32, 64, n=1, shortcut=False)
         out = layer(torch.randn(1, 32, 16, 16))
         assert out.shape == (1, 64, 16, 16)
@@ -39,7 +39,7 @@ class TestC3:
 
 class TestSPPF:
     def test_sppf_shape(self):
-        from mmaivision.models.common import SPPF
+        from mmaivision.models.yolov5.common import SPPF
         layer = SPPF(64, 64, k=5)
         out = layer(torch.randn(1, 64, 32, 32))
         assert out.shape == (1, 64, 32, 32)
@@ -48,7 +48,7 @@ class TestSPPF:
 class TestBackbone:
     def test_backbone_forward_shapes_s(self):
         """yolov5s: deepen=0.33, widen=0.5。"""
-        from mmaivision.models.backbone import YOLOv5CSPDarknet
+        from mmaivision.models.yolov5.backbone import YOLOv5CSPDarknet
         bb = YOLOv5CSPDarknet(deepen_factor=0.33, widen_factor=0.5)
         feats = bb(torch.randn(2, 3, 640, 640))
         assert len(feats) == 3
@@ -66,7 +66,7 @@ class TestBackbone:
         ('x', 1.33, 1.25, (320, 640, 1280)),
     ])
     def test_backbone_all_variants(self, variant, deepen, widen, expected_c):
-        from mmaivision.models.backbone import YOLOv5CSPDarknet
+        from mmaivision.models.yolov5.backbone import YOLOv5CSPDarknet
         bb = YOLOv5CSPDarknet(deepen_factor=deepen, widen_factor=widen)
         feats = bb(torch.randn(1, 3, 320, 320))
         assert feats[0].shape[1] == expected_c[0], f'{variant} P3 channels'
@@ -74,14 +74,14 @@ class TestBackbone:
         assert feats[2].shape[1] == expected_c[2], f'{variant} P5 channels'
 
     def test_backbone_invalid_factor_raises(self):
-        from mmaivision.models.backbone import YOLOv5CSPDarknet
+        from mmaivision.models.yolov5.backbone import YOLOv5CSPDarknet
         with pytest.raises(ValueError, match='必须 > 0'):
             YOLOv5CSPDarknet(deepen_factor=0, widen_factor=0.5)
         with pytest.raises(ValueError, match='必须 > 0'):
             YOLOv5CSPDarknet(deepen_factor=0.33, widen_factor=-1)
 
     def test_backbone_invalid_out_indices_raises(self):
-        from mmaivision.models.backbone import YOLOv5CSPDarknet
+        from mmaivision.models.yolov5.backbone import YOLOv5CSPDarknet
         with pytest.raises(ValueError, match='out_indices'):
             YOLOv5CSPDarknet(deepen_factor=0.33, widen_factor=0.5,
                              out_indices=(0, 1, 2))
@@ -90,7 +90,7 @@ class TestBackbone:
 class TestNeck:
     def test_neck_forward_shapes(self):
         """s 变体 neck: 输入三层 (128,256,512) → 输出三层同 shape。"""
-        from mmaivision.models.neck import YOLOv5PAFPN
+        from mmaivision.models.yolov5.neck import YOLOv5PAFPN
         neck = YOLOv5PAFPN(
             in_channels=(128, 256, 512),
             out_channels=(128, 256, 512),
@@ -107,7 +107,7 @@ class TestNeck:
         assert outs[2].shape == (2, 512, 20, 20)
 
     def test_neck_wrong_in_channels_len_raises(self):
-        from mmaivision.models.neck import YOLOv5PAFPN
+        from mmaivision.models.yolov5.neck import YOLOv5PAFPN
         with pytest.raises(AssertionError):
             YOLOv5PAFPN(in_channels=(128, 256), out_channels=(128, 256),
                         deepen_factor=0.33, widen_factor=0.5)
@@ -115,7 +115,7 @@ class TestNeck:
 
 class TestHead:
     def test_head_forward_shapes(self):
-        from mmaivision.models.head import YOLOv5Head
+        from mmaivision.models.yolov5.head import YOLOv5Head
         head = YOLOv5Head(
             num_classes=80,
             in_channels=(128, 256, 512),
@@ -133,7 +133,7 @@ class TestHead:
         assert outs[2].shape == (2, 255, 20, 20)
 
     def test_head_invalid_args_raises(self):
-        from mmaivision.models.head import YOLOv5Head
+        from mmaivision.models.yolov5.head import YOLOv5Head
         with pytest.raises(ValueError):
             YOLOv5Head(num_classes=0, in_channels=(128, 256, 512))
         with pytest.raises(ValueError):
@@ -141,7 +141,7 @@ class TestHead:
                        num_base_priors=0)
 
     def test_head_wrong_in_channels_len_raises(self):
-        from mmaivision.models.head import YOLOv5Head
+        from mmaivision.models.yolov5.head import YOLOv5Head
         with pytest.raises(AssertionError):
             YOLOv5Head(num_classes=80, in_channels=(128, 256))
 
