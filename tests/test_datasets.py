@@ -37,7 +37,8 @@ def test_missing_classes_raises():
 
 
 def test_load_data_list_basic():
-    ds = _make_dataset()
+    # 显式禁用 filter_empty_gt 以保留 IMG_b（0 instance 样本）用于检查
+    ds = _make_dataset(filter_cfg=dict(filter_empty_gt=False, min_size=1))
     # IMG_corrupt.json 解析失败被跳过 → 余下 IMG_a + IMG_b 共 2 个样本
     # IMG_b 暂时也保留（filter_empty_gt 由后续任务实现）
     assert len(ds.data_list) == 2

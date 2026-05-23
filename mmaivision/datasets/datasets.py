@@ -69,7 +69,7 @@ class LabelmeDetDataset(BaseDataset):
             return self.data_list
 
         filter_cfg = self.filter_cfg or {}
-        if not filter_cfg.get('filter_empty_gt', False):
+        if not filter_cfg.get('filter_empty_gt', True):
             return self.data_list
 
         return [d for d in self.data_list if len(d['instances']) > 0]
