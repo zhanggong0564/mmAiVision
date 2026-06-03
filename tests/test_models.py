@@ -171,13 +171,3 @@ class TestDetector:
         assert preds[0].shape == (2, 255, 80, 80)
         assert preds[1].shape == (2, 255, 40, 40)
         assert preds[2].shape == (2, 255, 20, 20)
-
-    def test_detector_loss_mode_raises(self):
-        model = self._build()
-        with pytest.raises(NotImplementedError, match='loss'):
-            model.forward(torch.randn(1, 3, 640, 640), mode='loss')
-
-    def test_detector_predict_mode_raises(self):
-        model = self._build()
-        with pytest.raises(NotImplementedError, match='predict'):
-            model.forward(torch.randn(1, 3, 640, 640), mode='predict')

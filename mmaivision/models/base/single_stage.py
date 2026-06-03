@@ -43,9 +43,18 @@ class SingleStageDetector(BaseModel):
             f"mode={mode!r} 不支持,可选 'tensor' / 'loss' / 'predict'。")
 
     def loss(self, inputs: Tensor, data_samples=None):
-        raise NotImplementedError(
-            f"{type(self).__name__} 尚未实现 loss 分支。")
+        feats = self.extract_feat(inputs)
+        pred_maps = self.bbox_head(feats)
+        batch_gt = [s.gt_instances for s in data_samples]
+        batch_metas = [s.metainfo for s in data_samples]
+        return self.bbox_head.loss_by_feat(pred_maps, batch_gt, batch_metas)
 
     def predict(self, inputs: Tensor, data_samples=None):
-        raise NotImplementedError(
-            f"{type(self).__name__} 尚未实现 predict 分支。")
+        feats = self.extract_feat(inputs)
+        pred_maps = self.bbox_head(feats)
+        if data_samples is not None:
+            batch_metas = [s.metainfo for s in data_samples]
+        else:
+            batch_metas = [dict(batch_input_shape=tuple(inputs.shape[-2:]))
+                           ] * inputs.shape[0]
+        return self.bbox_head.predict_by_feat(pred_maps, batch_metas)
