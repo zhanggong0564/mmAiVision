@@ -102,6 +102,8 @@ data
 # ============================================================
 work_dirs/
 vis/
+pretrained/
+*.pt
 *.pth
 *.pkl
 *.pkl.json
