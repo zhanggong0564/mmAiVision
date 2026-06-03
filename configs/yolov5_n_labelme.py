@@ -65,6 +65,13 @@ train_pipeline = [
     dict(type='PackDetInputs'),
 ]
 
+test_pipeline = [
+    dict(type='LoadImageFromFile'),
+    dict(type='LoadLabelmeAnnotations'),
+    dict(type='LetterResize', scale=img_scale, pad_val=114),
+    dict(type='PackDetInputs'),
+]
+
 train_dataloader = dict(
     batch_size=2,
     num_workers=2,
@@ -74,7 +81,7 @@ train_dataloader = dict(
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='train.txt',
+        ann_file='train_split.txt',
         data_prefix=dict(img='images', ann='jsons'),
         metainfo=metainfo,
         filter_cfg=dict(filter_empty_gt=True, min_size=1),
@@ -82,10 +89,41 @@ train_dataloader = dict(
     ),
 )
 
+val_dataloader = dict(
+    batch_size=4,
+    num_workers=2,
+    persistent_workers=True,
+    drop_last=False,
+    sampler=dict(type='DefaultSampler', shuffle=False),
+    collate_fn=dict(type='pseudo_collate'),
+    dataset=dict(
+        type=dataset_type,
+        data_root=data_root,
+        ann_file='val.txt',
+        data_prefix=dict(img='images', ann='jsons'),
+        metainfo=metainfo,
+        test_mode=True,
+        pipeline=test_pipeline,
+    ),
+)
+test_dataloader = val_dataloader
+
+val_evaluator = dict(
+    type='LabelmeDetMetric',
+    num_classes=num_classes,
+    class_names=classes,
+    iou_thrs=[0.5])
+test_evaluator = val_evaluator
+
 # -------------------- 训练循环 / 优化器 / 调度 --------------------
 max_epochs = 100
+val_interval = 10  # 每 10 个 epoch 评估一次
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=max_epochs, val_interval=max_epochs)
+train_cfg = dict(
+    type='EpochBasedTrainLoop', max_epochs=max_epochs,
+    val_interval=val_interval)
+val_cfg = dict(type='ValLoop')
+test_cfg = dict(type='TestLoop')
 
 optim_wrapper = dict(
     type='OptimWrapper',
@@ -97,14 +135,6 @@ param_scheduler = [
     dict(type='LinearLR', start_factor=0.01, by_epoch=False, begin=0, end=500),
     dict(type='CosineAnnealingLR', eta_min=0.0001, begin=0, end=max_epochs, by_epoch=True, convert_to_iter_based=True),
 ]
-
-# 训练 only:不配置 val/test loop。
-val_cfg = None
-val_dataloader = None
-val_evaluator = None
-test_cfg = None
-test_dataloader = None
-test_evaluator = None
 
 # -------------------- 预训练权重 --------------------
 # 由 tools/convert_ultralytics.py 从官方 yolov5n.pt 转换而来(COCO 80 类)。
