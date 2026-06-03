@@ -1,4 +1,9 @@
 from .datasets import LabelmeDetDataset
-from .transforms import CustomTransform
+from .transforms import LetterResize, LoadLabelmeAnnotations, PackDetInputs
 
-__all__ = ['LabelmeDetDataset', 'CustomTransform']
+__all__ = [
+    'LabelmeDetDataset',
+    'LoadLabelmeAnnotations',
+    'LetterResize',
+    'PackDetInputs',
+]
