@@ -103,8 +103,22 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Images / 图片：默认全部忽略（除下方 tests/data 样本外）
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.gif
+*.tif
+*.tiff
+*.webp
+
+# datasets (含符号链接) / 数据集
 data/
 data
+
+# 保留测试样本数据（含图片，必须放在图片规则之后才能生效）
 !tests/data/
 !tests/data/**
 .vscode
@@ -116,6 +130,7 @@ data
 *.pkl.json
 *.log.json
 work_dirs/
+vis/
 
 # Pytorch
 *.pth
