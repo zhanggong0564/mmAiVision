@@ -50,7 +50,7 @@ DATASETS = Registry(
 TRANSFORMS = Registry(
     'transform',
     parent=MMENGINE_TRANSFORMS,
-    locations=['mmaivision.datasets.transform'])
+    locations=['mmaivision.datasets.transforms'])
 
 # manage all kinds of modules inheriting `nn.Module`
 MODELS = Registry(
@@ -71,24 +71,24 @@ WEIGHT_INITIALIZERS = Registry(
 OPTIMIZERS = Registry(
     'optimizer',
     parent=MMENGINE_OPTIMIZERS,
-    locations=['mmaivision.engine.optimizer'])
+    locations=['mmaivision.engine.optimizers'])
 
 # manage optimizer wrapper
 OPTIM_WRAPPERS = Registry(
     'optim_wrapper',
     parent=MMENGINE_OPTIM_WRAPPERS,
-    locations=['mmaivision.engine.optim_wrapper'])
+    locations=['mmaivision.engine.optim_wrappers'])
 
 # manage constructors that customize the optimization hyperparameters.
 OPTIM_WRAPPER_CONSTRUCTORS = Registry(
     'optimizer constructor',
     parent=MMENGINE_OPTIM_WRAPPER_CONSTRUCTORS,
-    locations=['mmaivision.engine.optim_wrapper_constructor'])
+    locations=['mmaivision.engine.optim_wrapper_constructors'])
 # manage all kinds of parameter schedulers like `MultiStepLR`
 PARAM_SCHEDULERS = Registry(
     'parameter scheduler',
     parent=MMENGINE_PARAM_SCHEDULERS,
-    locations=['mmaivision.engine.scheduler'])
+    locations=['mmaivision.engine.schedulers'])
 # manage all kinds of metrics
 METRICS = Registry(
     'metric',
