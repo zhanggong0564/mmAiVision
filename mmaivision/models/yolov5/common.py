@@ -34,7 +34,9 @@ class Conv(nn.Module):
         super().__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d),
                               groups=g, dilation=d, bias=False)
-        self.bn = nn.BatchNorm2d(c2)
+        # eps/momentum 对齐 ultralytics initialize_weights(BN eps=1e-3,
+        # momentum=0.03),保证官方权重转换后数值完全一致。
+        self.bn = nn.BatchNorm2d(c2, eps=1e-3, momentum=0.03)
         self.act = nn.SiLU() if act else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
