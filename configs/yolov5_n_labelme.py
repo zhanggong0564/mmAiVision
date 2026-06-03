@@ -125,6 +125,15 @@ train_cfg = dict(
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
+# 每次评估后按 mAP_50 自动保留最优权重(best_*.pth),同时保留最近 3 个常规 ckpt。
+default_hooks = dict(
+    checkpoint=dict(
+        type='CheckpointHook',
+        interval=val_interval,
+        max_keep_ckpts=3,
+        save_best='labelme/mAP_50',
+        rule='greater'))
+
 optim_wrapper = dict(
     type='OptimWrapper',
     optimizer=dict(type='SGD', lr=0.01, momentum=0.937, weight_decay=0.0005, nesterov=True),
