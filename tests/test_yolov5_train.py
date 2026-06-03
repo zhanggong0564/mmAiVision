@@ -281,12 +281,17 @@ class TestDetectorEndToEnd:
         assert grad is not None and grad.abs().sum().item() > 0
 
     def test_detector_predict_mode_returns_instancedata(self):
-        from mmengine.structures import InstanceData
+        from mmengine.structures import BaseDataElement, InstanceData
         model = self._model()
         inputs, samples = self._data(B=2)
         preds = model.forward(inputs, samples, mode='predict')
         assert isinstance(preds, list) and len(preds) == 2
-        assert all(isinstance(p, InstanceData) for p in preds)
+        # predict 把预测挂回 data_samples 的 pred_instances
+        for p in preds:
+            assert isinstance(p, BaseDataElement)
+            assert isinstance(p.pred_instances, InstanceData)
+            assert hasattr(p.pred_instances, 'bboxes')
+            assert hasattr(p, 'gt_instances')
 
     def test_detector_unknown_mode_raises(self):
         model = self._model()

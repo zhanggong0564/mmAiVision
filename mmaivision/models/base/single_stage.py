@@ -57,4 +57,11 @@ class SingleStageDetector(BaseModel):
         else:
             batch_metas = [dict(batch_input_shape=tuple(inputs.shape[-2:]))
                            ] * inputs.shape[0]
-        return self.bbox_head.predict_by_feat(pred_maps, batch_metas)
+        results_list = self.bbox_head.predict_by_feat(pred_maps, batch_metas)
+        # 无 data_samples(纯推理)时直接返回预测列表;否则把预测挂回
+        # data_samples 的 pred_instances,供评估器读取 gt/pred 配对。
+        if data_samples is None:
+            return results_list
+        for data_sample, pred in zip(data_samples, results_list):
+            data_sample.pred_instances = pred
+        return data_samples
