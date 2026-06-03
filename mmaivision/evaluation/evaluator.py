@@ -1,49 +1,17 @@
-"""This module is used to patch the default Evaluator in MMEngine.
+"""mmaivision 默认 Evaluator。
 
-For the convenient of customizing the Metric, ``mmaivision`` patch
-the ``mmengine.evaluator.Evaluator`` with the local ``Evaluator`` Thanks to
-this, the Metric in mmengine-template only needs to implement the ``add`` and
-``compute_metric``.
+直接复用 mmengine 标准 ``Evaluator``(``process`` 调 ``metric.process``、
+``evaluate`` 调 ``metric.evaluate``),与本仓库基于 mmengine ``BaseMetric``
+(``process`` + ``compute_metrics``)实现的指标(如 ``LabelmeDetMetric``)兼容。
 
-Warning:
-    If there is a need to customize the Evaluator for more complicated evaluate
-    process. The methods defined in ``CustomEvaluator`` must call
-    ``metric.compute`` and ``metric.add`` rather than ``metric.process`` and
-    ``metric.evaluate``
+注:模板早期版本曾为 mmeval 的 ``add`` / ``compute`` 接口重写过 process/evaluate,
+但本项目未安装 mmeval,故回归标准接口。
 """
-
 from mmengine.evaluator import Evaluator as MMEngineEvaluator
-from mmengine.structures import BaseDataElement
 
 from mmaivision.registry import EVALUATOR
 
 
 @EVALUATOR.register_module()
 class Evaluator(MMEngineEvaluator):
-
-    def process(self, data_samples, data_batch=None):
-        _data_samples = []
-        for data_sample in data_samples:
-            if isinstance(data_sample, BaseDataElement):
-                _data_samples.append(data_sample.to_dict())
-            else:
-                _data_samples.append(data_sample)
-
-        for metric in self.metrics:
-            metric.add(data_batch, _data_samples)
-
-    def evaluate(self, size):
-        metrics = {}
-        for metric in self.metrics:
-            _results = metric.compute(size)
-
-            # Check metric name conflicts
-            for name in _results.keys():
-                if name in metrics:
-                    raise ValueError(
-                        'There are multiple evaluation results with the same '
-                        f'metric name {name}. Please make sure all metrics '
-                        'have different prefixes.')
-
-            metrics.update(_results)
-        return metrics
+    """与 mmengine 标准 BaseMetric 接口一致的 Evaluator。"""
