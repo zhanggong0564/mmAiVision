@@ -49,6 +49,15 @@ class LoadLabelmeAnnotations(BaseTransform):
         results['gt_bboxes'] = bboxes
         results['gt_bboxes_labels'] = labels
         results['gt_ignore_flags'] = ignore
+        polygons = []
+        for inst in instances:
+            m = inst.get('mask')
+            if m and len(m) > 0 and len(m[0]) >= 6:
+                pts = np.array(m[0], dtype=np.float32).reshape(-1, 2)
+            else:
+                pts = np.zeros((0, 2), dtype=np.float32)
+            polygons.append(pts)
+        results['gt_polygons'] = polygons
         return results
 
 
@@ -99,6 +108,15 @@ class LetterResize(BaseTransform):
             b[:, 0::2] = b[:, 0::2].clip(0, self.scale)
             b[:, 1::2] = b[:, 1::2].clip(0, self.scale)
             results['gt_bboxes'] = b
+        if 'gt_polygons' in results:
+            new_polys = []
+            for p in results['gt_polygons']:
+                if len(p):
+                    p = p.astype(np.float32).copy() * r
+                    p[:, 0] = (p[:, 0] + left).clip(0, self.scale)
+                    p[:, 1] = (p[:, 1] + top).clip(0, self.scale)
+                new_polys.append(p)
+            results['gt_polygons'] = new_polys
         return results
 
 
@@ -132,6 +150,15 @@ class PackDetInputs(BaseTransform):
         else:
             gt_instances.bboxes = torch.zeros((0, 4), dtype=torch.float32)
             gt_instances.labels = torch.zeros((0, ), dtype=torch.int64)
+
+        if 'gt_polygons' in results:
+            H, W = results['img_shape'][:2]
+            polys = results['gt_polygons']
+            masks = np.zeros((len(polys), H, W), dtype=np.uint8)
+            for idx, p in enumerate(polys):
+                if len(p) >= 3:
+                    cv2.fillPoly(masks[idx], [p.round().astype(np.int32)], 1)
+            gt_instances.masks = torch.from_numpy(masks)
 
         data_sample = BaseDataElement()
         data_sample.gt_instances = gt_instances

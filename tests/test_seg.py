@@ -51,3 +51,48 @@ class TestAssignerGtIdx:
         out = a([], anchors, [(80, 80), (40, 40), (20, 20)])
         for layer in out:
             assert layer['gt_idx'].numel() == 0
+
+
+class TestPolygonToMask:
+    def _results_with_polygon(self):
+        # 一张 100×100 图,一个三角形 polygon(label 0)+ 一个纯 rectangle(label 1)
+        return dict(
+            img=np.zeros((100, 100, 3), dtype=np.uint8),
+            img_shape=(100, 100),
+            ori_shape=(100, 100),
+            img_id='P0',
+            img_path='/tmp/P0.jpg',
+            instances=[
+                dict(bbox=[10., 10., 50., 50.], bbox_label=0, ignore_flag=0,
+                     mask=[[10., 10., 50., 10., 10., 50.]]),
+                dict(bbox=[60., 60., 90., 90.], bbox_label=1, ignore_flag=0),
+            ])
+
+    def test_load_builds_polygons(self):
+        from mmaivision.datasets.transforms import LoadLabelmeAnnotations
+        out = LoadLabelmeAnnotations().transform(self._results_with_polygon())
+        polys = out['gt_polygons']
+        assert len(polys) == 2
+        assert polys[0].shape == (3, 2)      # 三角形 3 点
+        assert polys[1].shape == (0, 2)      # 无 polygon → 空
+
+    def test_letterresize_scales_polygons(self):
+        from mmaivision.datasets.transforms import (LetterResize,
+                                                    LoadLabelmeAnnotations)
+        res = LoadLabelmeAnnotations().transform(self._results_with_polygon())
+        out = LetterResize(scale=200).transform(res)
+        # 100→200 等比 ×2,无 padding(正方形),点坐标翻倍
+        assert np.allclose(out['gt_polygons'][0][0], [20., 20.], atol=1e-3)
+
+    def test_pack_rasterizes_masks(self):
+        from mmaivision.datasets.transforms import (LetterResize, PackDetInputs,
+                                                    LoadLabelmeAnnotations)
+        res = LoadLabelmeAnnotations().transform(self._results_with_polygon())
+        res = LetterResize(scale=100).transform(res)
+        out = PackDetInputs().transform(res)
+        masks = out['data_samples'].gt_instances.masks
+        assert masks.shape == (2, 100, 100)
+        assert masks.dtype == torch.uint8
+        # 三角形 mask 内部有像素,纯 rectangle 实例 mask 为空(全 0)
+        assert masks[0].sum() > 0
+        assert masks[1].sum() == 0
