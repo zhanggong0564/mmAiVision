@@ -1,6 +1,7 @@
 """Tests for YOLOv5 实例分割链路:Proto / SegHead / SegDetector / 数据 / 指标。"""
 import numpy as np
 import torch
+from mmengine.structures import InstanceData
 
 
 class TestProto:
@@ -19,7 +20,6 @@ class TestAssignerGtIdx:
         return YOLOv5BatchAssigner(num_classes=2, strides=[8, 16, 32])
 
     def test_outputs_gt_idx(self):
-        from mmengine.structures import InstanceData
         a = self._assigner()
         gt0 = InstanceData()
         gt0.bboxes = torch.tensor([[10., 10., 50., 50.],
@@ -32,12 +32,17 @@ class TestAssignerGtIdx:
                    for _ in range(3)]
         sizes = [(80, 80), (40, 40), (20, 20)]
         out = a([gt0, gt1], anchors, sizes)
+        T = 3  # gt0(2) + gt1(1) 共 3 个 GT 实例（按图序拼接）
+        flat_classes = torch.tensor([0, 1, 1])  # gt0.labels + gt1.labels
         for layer in out:
             assert 'gt_idx' in layer
             assert layer['gt_idx'].shape == layer['img_idx'].shape
-            if layer['gt_idx'].numel() > 0:
-                assert int(layer['gt_idx'].max()) < 3
-                assert int(layer['gt_idx'].min()) >= 0
+            gi = layer['gt_idx']
+            if gi.numel() > 0:
+                assert int(gi.max()) < T
+                assert int(gi.min()) >= 0
+                # 验证 gt_idx 确实指向正确的 GT 实例（类别一致性）
+                assert torch.equal(layer['gt_class'], flat_classes[gi])
 
     def test_empty_has_gt_idx(self):
         a = self._assigner()
