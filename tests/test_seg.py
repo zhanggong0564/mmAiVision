@@ -84,6 +84,23 @@ class TestPolygonToMask:
         # 100→200 等比 ×2,无 padding(正方形),点坐标翻倍
         assert np.allclose(out['gt_polygons'][0][0], [20., 20.], atol=1e-3)
 
+    def test_letterresize_polygon_with_padding(self):
+        from mmaivision.datasets.transforms import (LetterResize,
+                                                    LoadLabelmeAnnotations)
+        # 100(H)×50(W) 图,scale=100 → r=min(100/100,100/50)=1.0,
+        # 缩放后 100×50,水平居中 pad:left=(100-50)//2=25,top=0
+        res = dict(
+            img=np.zeros((100, 50, 3), dtype=np.uint8),
+            img_shape=(100, 50), ori_shape=(100, 50),
+            img_id='P1', img_path='/tmp/P1.jpg',
+            instances=[dict(bbox=[10., 10., 40., 40.], bbox_label=0,
+                            ignore_flag=0,
+                            mask=[[10., 10., 40., 10., 10., 40.]])])
+        out = LetterResize(scale=100).transform(
+            LoadLabelmeAnnotations().transform(res))
+        # 点 (10,10) → ×1.0 + (left=25, top=0) = (35, 10)
+        assert np.allclose(out['gt_polygons'][0][0], [35., 10.], atol=1e-3)
+
     def test_pack_rasterizes_masks(self):
         from mmaivision.datasets.transforms import (LetterResize, PackDetInputs,
                                                     LoadLabelmeAnnotations)

@@ -33,6 +33,7 @@ class LoadLabelmeAnnotations(BaseTransform):
         - ``gt_bboxes``: ``(N, 4)`` float32, xyxy 像素。
         - ``gt_bboxes_labels``: ``(N,)`` int64。
         - ``gt_ignore_flags``: ``(N,)`` bool。
+        - ``gt_polygons``: ``list`` of ``(P, 2)`` float32 多边形点;无 polygon 的实例为 ``(0, 2)``。
     """
 
     def transform(self, results: dict) -> dict:
@@ -53,6 +54,7 @@ class LoadLabelmeAnnotations(BaseTransform):
         for inst in instances:
             m = inst.get('mask')
             if m and len(m) > 0 and len(m[0]) >= 6:
+                # 仅取首条轮廓 m[0],暂不支持带孔多边形(多轮廓)。
                 pts = np.array(m[0], dtype=np.float32).reshape(-1, 2)
             else:
                 pts = np.zeros((0, 2), dtype=np.float32)
@@ -108,7 +110,7 @@ class LetterResize(BaseTransform):
             b[:, 0::2] = b[:, 0::2].clip(0, self.scale)
             b[:, 1::2] = b[:, 1::2].clip(0, self.scale)
             results['gt_bboxes'] = b
-        if 'gt_polygons' in results:
+        if 'gt_polygons' in results and results['gt_polygons']:
             new_polys = []
             for p in results['gt_polygons']:
                 if len(p):
@@ -125,6 +127,8 @@ class PackDetInputs(BaseTransform):
     """打包成 ``inputs`` (uint8 CHW 张量) + ``data_samples`` (BaseDataElement)。
 
     ``data_samples.gt_instances`` 含 ``bboxes`` (xyxy 像素) 与 ``labels``;
+    当 ``gt_polygons`` 存在时,还包含 ``masks`` (二值实例 mask, ``(N, H, W)`` uint8),
+    由 polygon 光栅化填充而来。
     metainfo 透传若干字段供推理坐标还原。归一化 / RGB 交由 data_preprocessor。
     """
 
