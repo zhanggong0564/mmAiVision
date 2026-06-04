@@ -51,6 +51,7 @@ class YOLOv5BatchAssigner:
             gt_xy=torch.zeros(0, 2, device=device),
             gt_wh=torch.zeros(0, 2, device=device),
             gt_class=torch.zeros(0, dtype=torch.int64, device=device),
+            gt_idx=torch.zeros(0, dtype=torch.int64, device=device),
         )
 
     def __call__(self,
@@ -85,7 +86,12 @@ class YOLOv5BatchAssigner:
         all_gt = torch.cat(gt_list, dim=0)  # (T, 6)
         T = all_gt.shape[0]
 
-        # 加 anchor 索引一维: (na, T, 7)
+        # 追加全局 gt 索引列 → (T, 7):[img, class, cx, cy, w, h, gt_idx]
+        gt_idx_col = torch.arange(
+            T, device=device, dtype=torch.float32).view(T, 1)
+        all_gt = torch.cat([all_gt, gt_idx_col], dim=-1)
+
+        # 加 anchor 索引一维: (na, T, 8),anchor 在索引 7
         na = self.num_base_priors
         anchor_idx_col = torch.arange(
             na, device=device).view(-1, 1, 1).expand(-1, T, 1).float()
@@ -111,7 +117,7 @@ class YOLOv5BatchAssigner:
             max_ratio = torch.maximum(
                 wh_ratio, 1.0 / wh_ratio).max(dim=-1).values
             keep = max_ratio < self.prior_match_thr  # (na, T)
-            gt_kept = gt_layer[keep]  # (M0, 7)
+            gt_kept = gt_layer[keep]  # (M0, 8)
 
             if gt_kept.shape[0] == 0:
                 results.append(self._empty_dict(device))
@@ -126,7 +132,7 @@ class YOLOv5BatchAssigner:
             mask = torch.stack(
                 [torch.ones_like(j_pos[0]), j_pos[0], j_pos[1],
                  k_pos[0], k_pos[1]], dim=0)  # (5, M0)
-            gt_ext = gt_kept.repeat(5, 1, 1)[mask]  # (M, 7)
+            gt_ext = gt_kept.repeat(5, 1, 1)[mask]  # (M, 8)
             off_ext = off[:, None, :].repeat(1, gt_kept.shape[0], 1)[mask]
 
             gxy_ext = gt_ext[:, 2:4]
@@ -136,11 +142,12 @@ class YOLOv5BatchAssigner:
 
             results.append(dict(
                 img_idx=gt_ext[:, 0].long(),
-                anchor_idx=gt_ext[:, 6].long(),
+                anchor_idx=gt_ext[:, 7].long(),
                 grid_y=grid_y,
                 grid_x=grid_x,
                 gt_xy=gxy_ext,
                 gt_wh=gt_ext[:, 4:6],
                 gt_class=gt_ext[:, 1].long(),
+                gt_idx=gt_ext[:, 6].long(),
             ))
         return results
