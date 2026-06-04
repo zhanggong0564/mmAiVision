@@ -90,3 +90,20 @@ class SPPF(nn.Module):
         y1 = self.m(x)
         y2 = self.m(y1)
         return self.cv2(torch.cat((x, y1, y2, self.m(y2)), dim=1))
+
+
+class Proto(nn.Module):
+    """YOLOv5-seg 原型 mask 网络,对齐 ultralytics models/common.py Proto。
+
+    输入某层特征(通常 P3),输出 ``c2`` 张原型 mask,空间分辨率为输入的 2 倍。
+    """
+
+    def __init__(self, c1: int, c_: int = 256, c2: int = 32):
+        super().__init__()
+        self.cv1 = Conv(c1, c_, k=3)
+        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
+        self.cv2 = Conv(c_, c_, k=3)
+        self.cv3 = Conv(c_, c2)  # 默认 1x1
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.cv3(self.cv2(self.upsample(self.cv1(x))))
