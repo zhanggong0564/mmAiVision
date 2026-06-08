@@ -352,3 +352,26 @@ class TestSegMetric:
         out = m.compute_metrics(m.results)
         # IoU=0.5 >= 0.5 → TP → AP=1.0
         assert out['mAP_50'] == 1.0
+
+
+class TestConvertSegMapping:
+    def test_seg_target_keys_all_have_prefix(self):
+        # 不需要网络:构建 seg 目标模型,验证其每个 state_dict key 都能被
+        # PREFIX_MAP ∪ SEG_EXTRA_PREFIX_MAP 的某个前缀匹配到(映射表完整)。
+        import importlib.util, os
+        spec = importlib.util.spec_from_file_location(
+            'convert_ultra',
+            os.path.join(os.path.dirname(__file__), '..', 'tools',
+                         'convert_ultralytics.py'))
+        conv = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(conv)
+        target = conv.build_target_model('n', num_classes=80, seg=True,
+                                         num_masks=32)
+        prefix_map = dict(conv.PREFIX_MAP)
+        prefix_map.update(conv.SEG_EXTRA_PREFIX_MAP)
+        prefixes = sorted(prefix_map, key=len, reverse=True)
+        unmatched = []
+        for k in target.state_dict():
+            if not any(k == p or k.startswith(p + '.') for p in prefixes):
+                unmatched.append(k)
+        assert not unmatched, f'无前缀匹配的 key: {unmatched[:10]}'

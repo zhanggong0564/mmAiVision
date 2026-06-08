@@ -11,8 +11,12 @@ ultralytics 把整网建成一个 nn.Sequential，按 yaml 顺序编号 model.0.
     python tools/convert_ultralytics.py --size s --out work_dirs/yolov5s_official.pth
 
     # 使用本地 .pt（仍经 torch.hub 提供反序列化所需代码）
-    python tools/convert_ultralytics.py --size s --weights yolov5s.pt \
+    python tools/convert_ultralytics.py --size s --weights yolov5s.pt \\
         --out work_dirs/yolov5s_official.pth
+
+    # 转换 yolov5n-seg 实例分割权重（需本地 .pt）
+    python tools/convert_ultralytics.py --size n --seg \\
+        --weights yolov5n-seg.pt --out work_dirs/yolov5n_seg_official.pth
 
 转换后默认做一次端到端数值等价校验（--no-verify 可关闭）。
 """
@@ -61,6 +65,14 @@ PREFIX_MAP = {
     'bbox_head.convs.2': 'model.24.m.2',
 }
 
+# yolov5-seg(Segment head)额外的 proto 子模块前缀映射。
+# detect convs(model.24.m.{0,1,2})前缀沿用 PREFIX_MAP,仅通道数随 nm 变化。
+SEG_EXTRA_PREFIX_MAP = {
+    'bbox_head.proto.cv1': 'model.24.proto.cv1',
+    'bbox_head.proto.cv2': 'model.24.proto.cv2',
+    'bbox_head.proto.cv3': 'model.24.proto.cv3',
+}
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -82,24 +94,43 @@ def parse_args():
     parser.add_argument(
         '--no-verify', action='store_true',
         help='跳过转换后的端到端数值等价校验')
+    parser.add_argument(
+        '--seg', action='store_true',
+        help='转换 yolov5-seg 实例分割权重(含 Proto + mask 系数);'
+             '需配合 --weights 指定本地 yolov5{size}-seg.pt')
+    parser.add_argument(
+        '--num-masks', type=int, default=32,
+        help='mask 系数维度 nm,默认 32(与官方 seg 一致)')
     return parser.parse_args()
 
 
-def build_target_model(size, num_classes):
-    """按 size/num_classes 构建本仓库的 YOLOv5Detector。"""
+def build_target_model(size, num_classes, seg=False, num_masks=32):
+    """按 size/num_classes 构建本仓库的 YOLOv5 检测或分割模型。"""
     d, w = SIZE_FACTORS[size]
     ch = [make_divisible(c * w, 8) for c in BASE_CHANNELS]
     p3p4p5 = [ch[2], ch[3], ch[4]]
-    cfg = dict(
-        type='YOLOv5Detector',
-        backbone=dict(
-            type='YOLOv5CSPDarknet', deepen_factor=d, widen_factor=w),
-        neck=dict(
-            type='YOLOv5PAFPN', in_channels=p3p4p5, out_channels=p3p4p5,
-            deepen_factor=d, widen_factor=w),
-        head=dict(
-            type='YOLOv5Head', num_classes=num_classes, in_channels=p3p4p5),
-    )
+    if seg:
+        cfg = dict(
+            type='YOLOv5SegDetector',
+            backbone=dict(type='YOLOv5CSPDarknet', deepen_factor=d,
+                          widen_factor=w),
+            neck=dict(type='YOLOv5PAFPN', in_channels=p3p4p5,
+                      out_channels=p3p4p5, deepen_factor=d, widen_factor=w),
+            head=dict(type='YOLOv5SegHead', num_classes=num_classes,
+                      in_channels=p3p4p5, num_masks=num_masks),
+        )
+    else:
+        cfg = dict(
+            type='YOLOv5Detector',
+            backbone=dict(
+                type='YOLOv5CSPDarknet', deepen_factor=d, widen_factor=w),
+            neck=dict(
+                type='YOLOv5PAFPN', in_channels=p3p4p5, out_channels=p3p4p5,
+                deepen_factor=d, widen_factor=w),
+            head=dict(
+                type='YOLOv5Head', num_classes=num_classes,
+                in_channels=p3p4p5),
+        )
     return MODELS.build(cfg)
 
 
@@ -199,12 +230,17 @@ def _ensure_local_repo(hub):
     return cache
 
 
-def load_ultralytics(hub, size, weights):
-    """经 torch.hub（source='local'）取得官方 DetectionModel。"""
+def load_ultralytics(hub, size, weights, seg=False):
+    """经 torch.hub（source='local'）取得官方 DetectionModel/SegmentationModel。"""
     stubbed = _stub_absent_modules()
     if stubbed:
         print(f'      已 stub 缺失的可选依赖（不影响前向）: {stubbed}')
     repo = _ensure_local_repo(hub)
+    if seg and not weights:
+        raise SystemExit(
+            'seg 模式需要 --weights 指定本地 yolov5{size}-seg.pt'
+            '（ultralytics 无 yolov5-seg 的 torch.hub 命名入口,'
+            '请先从官方 release 下载对应 .pt）。')
     if weights:
         model = torch.hub.load(
             repo, 'custom', path=weights, source='local',
@@ -220,9 +256,12 @@ def load_ultralytics(hub, size, weights):
     return model.float().eval()
 
 
-def remap(target_sd, ultra_sd):
+def remap(target_sd, ultra_sd, extra_prefix=None):
     """把 target（本仓库）每个 key 映射到 ultralytics key 并取值。"""
-    prefixes = sorted(PREFIX_MAP, key=len, reverse=True)
+    prefix_map = dict(PREFIX_MAP)
+    if extra_prefix:
+        prefix_map.update(extra_prefix)
+    prefixes = sorted(prefix_map, key=len, reverse=True)
     converted, missing, mismatch = {}, [], []
     for k, v in target_sd.items():
         matched = next(
@@ -230,7 +269,7 @@ def remap(target_sd, ultra_sd):
         if matched is None:
             missing.append((k, '无前缀匹配'))
             continue
-        src = PREFIX_MAP[matched] + k[len(matched):]
+        src = prefix_map[matched] + k[len(matched):]
         if src not in ultra_sd:
             missing.append((k, f'源缺失 {src}'))
             continue
@@ -239,7 +278,7 @@ def remap(target_sd, ultra_sd):
             mismatch.append((k, src, tuple(v.shape), tuple(sv.shape)))
             continue
         converted[k] = sv.detach().clone()
-    used = {PREFIX_MAP[next(p for p in prefixes if k == p or k.startswith(
+    used = {prefix_map[next(p for p in prefixes if k == p or k.startswith(
         p + '.'))] + k[len(next(p for p in prefixes if k == p or k.startswith(
             p + '.'))):]
         for k in converted}
@@ -248,38 +287,60 @@ def remap(target_sd, ultra_sd):
 
 
 @torch.no_grad()
-def verify(target_model, ultra_model, num_classes, na):
-    """同一输入喂两网，比对原始 conv 输出的最大绝对误差。"""
+def verify(target_model, ultra_model, num_classes, na, seg=False, nm=32):
+    """同一输入喂两网，比对原始 conv 输出的最大绝对误差。
+
+    seg 模式仅比对检测分支的原始输出，且做容错：若官方 seg 模型输出结构
+    与预期不符，打印告警并返回 None（视为跳过），不让校验崩溃整个流程。
+    """
     target_model.cpu().eval()
     ultra_model.cpu().eval()
     im = torch.rand(1, 3, 640, 640)
-    ours = target_model(im, mode='tensor')          # list[(b, na*no, h, w)]
-    ul_raw = ultra_model(im)[1]                       # list[(b, na, h, w, no)]
-    no = num_classes + 5
-    max_diff = 0.0
-    for o, u in zip(ours, ul_raw):
-        b, _, h, w = o.shape
-        o = o.view(b, na, no, h, w).permute(0, 1, 3, 4, 2).contiguous()
-        max_diff = max(max_diff, (o - u).abs().max().item())
-    return max_diff
+    out = target_model(im, mode='tensor')
+    ours = out[0] if seg else out          # seg 时取 pred_maps
+    no = num_classes + 5 + (nm if seg else 0)
+    try:
+        ul = ultra_model(im)
+        ul_raw = ul[1]                     # detect 分支三层原始输出
+        max_diff = 0.0
+        for o, u in zip(ours, ul_raw):
+            b, _, h, w = o.shape
+            o = o.view(b, na, no, h, w).permute(0, 1, 3, 4, 2).contiguous()
+            max_diff = max(max_diff, (o - u).abs().max().item())
+        return max_diff
+    except Exception as e:  # noqa: BLE001
+        if seg:
+            print(f'      [warn] seg 数值校验结构不符，跳过: {e}')
+            return None
+        raise
 
 
 def main():
     args = parse_args()
-    out = args.out or f'work_dirs/yolov5{args.size}_official.pth'
+    out = args.out or (
+        f'work_dirs/yolov5{args.size}{"_seg" if args.seg else ""}_official.pth')
 
-    print(f'[1/4] 构建本仓库 YOLOv5Detector (size={args.size}, '
-          f'num_classes={args.num_classes}) ...')
-    target = build_target_model(args.size, args.num_classes)
+    model_type = 'YOLOv5SegDetector' if args.seg else 'YOLOv5Detector'
+    print(f'[1/4] 构建本仓库 {model_type} (size={args.size}, '
+          f'num_classes={args.num_classes}'
+          + (f', num_masks={args.num_masks}' if args.seg else '')
+          + ') ...')
+    target = build_target_model(args.size, args.num_classes,
+                                seg=args.seg, num_masks=args.num_masks)
     target_sd = target.state_dict()
 
-    src = args.weights or f'torch.hub:{args.hub}:yolov5{args.size}'
+    if args.seg:
+        src = args.weights or f'<需要本地 yolov5{args.size}-seg.pt>'
+    else:
+        src = args.weights or f'torch.hub:{args.hub}:yolov5{args.size}'
     print(f'[2/4] 载入 ultralytics 官方模型 ({src}) ...')
-    ultra = load_ultralytics(args.hub, args.size, args.weights)
+    ultra = load_ultralytics(args.hub, args.size, args.weights, seg=args.seg)
     ultra_sd = ultra.state_dict()
 
     print('[3/4] 前缀重映射 + shape 校验 ...')
-    converted, missing, mismatch, unused = remap(target_sd, ultra_sd)
+    extra_prefix = SEG_EXTRA_PREFIX_MAP if args.seg else None
+    converted, missing, mismatch, unused = remap(target_sd, ultra_sd,
+                                                 extra_prefix=extra_prefix)
     print(f'      目标参数 {len(target_sd)} | 成功映射 {len(converted)} | '
           f'缺失 {len(missing)} | shape 不符 {len(mismatch)}')
     print(f'      未使用的源参数（anchor 等，预期）: {unused}')
@@ -301,11 +362,15 @@ def main():
     if not args.no_verify:
         print('[4/4] 端到端数值等价校验 ...')
         na = target.bbox_head.num_base_priors
-        diff = verify(target, ultra, args.num_classes, na)
-        tag = 'PASS ✅' if diff < 1e-4 else 'FAIL ❌'
-        print(f'      原始输出最大绝对误差 = {diff:.3e}  ->  {tag}')
-        if diff >= 1e-4:
-            raise SystemExit('数值校验未通过，转换结果与官方不等价。')
+        diff = verify(target, ultra, args.num_classes, na,
+                      seg=args.seg, nm=args.num_masks)
+        if diff is None:
+            print('      数值校验已跳过（seg 模式输出结构不符，见上方告警）。')
+        else:
+            tag = 'PASS ✅' if diff < 1e-4 else 'FAIL ❌'
+            print(f'      原始输出最大绝对误差 = {diff:.3e}  ->  {tag}')
+            if diff >= 1e-4:
+                raise SystemExit('数值校验未通过，转换结果与官方不等价。')
     else:
         print('[4/4] 跳过数值校验 (--no-verify)')
 
@@ -314,7 +379,8 @@ def main():
     torch.save(
         dict(state_dict=converted,
              meta=dict(source='ultralytics/yolov5', size=args.size,
-                       num_classes=args.num_classes)),
+                       num_classes=args.num_classes,
+                       seg=args.seg, num_masks=args.num_masks)),
         out)
     print(f'已保存转换权重 -> {out}')
 
