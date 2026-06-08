@@ -310,9 +310,16 @@ class YOLOv5SegHead(YOLOv5Head):
             init_cfg=init_cfg)
         if num_masks < 1:
             raise ValueError(f'num_masks 必须 >= 1, got {num_masks}')
+        if loss_mask_weight < 0:
+            raise ValueError(
+                f'loss_mask_weight 必须 >= 0, got {loss_mask_weight}')
+        if mask_ratio <= 0:
+            raise ValueError(f'mask_ratio 必须 > 0, got {mask_ratio}')
         self.num_masks = num_masks
         self.proto_channels = proto_channels
         self.loss_mask_weight = loss_mask_weight
+        # mask_ratio = P3_stride / Proto上采样倍率 (默认 8/2=4);
+        # 改 Proto 上采样或接入不同 stride 时需同步调整,确保 mask 上采样回输入分辨率。
         self.mask_ratio = mask_ratio
         # 重建 convs:每 anchor 输出 nc+5+nm(父类只建了 nc+5)
         out_c = num_base_priors * (num_classes + 5 + num_masks)
@@ -339,6 +346,8 @@ class YOLOv5SegHead(YOLOv5Head):
     def loss_by_feat(self, pred_maps, proto, batch_gt_instances,
                      batch_img_metas):
         B = pred_maps[0].shape[0]
+        assert len(batch_gt_instances) == B, \
+            f'batch_gt_instances 长度 {len(batch_gt_instances)} != pred batch {B}'
         nc = self.num_classes
         na = self.num_base_priors
         nm = self.num_masks

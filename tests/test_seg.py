@@ -169,7 +169,7 @@ class TestSegHead:
 
     def test_predict_outputs_masks(self):
         head = _seg_head()
-        head.score_thr = 0.0  # 强制有输出
+        head.score_thr = 1e-9  # 强制有输出(绕过 score_thr 过滤,同时满足 >0 约束)
         pred_maps, proto = head(_feats())
         results = head.predict_by_feat(pred_maps, proto, [{}, {}])
         assert len(results) == 2
@@ -179,3 +179,33 @@ class TestSegHead:
             assert r0.masks.shape[0] == r0.bboxes.shape[0]
             assert r0.masks.shape[1:] == (640, 640)
             assert r0.masks.dtype == torch.bool
+
+    def test_loss_mask_zero_when_no_gt(self):
+        # 全 batch 空 GT → loss_mask 应为 0(走 all_masks is None 路径)
+        from mmengine.structures import InstanceData
+        head = _seg_head()
+        pred_maps, proto = head(_feats())
+        empty = []
+        for _ in range(2):
+            g = InstanceData()
+            g.bboxes = torch.zeros(0, 4)
+            g.labels = torch.zeros(0, dtype=torch.int64)
+            g.masks = torch.zeros(0, 640, 640, dtype=torch.uint8)
+            empty.append(g)
+        losses = head.loss_by_feat(pred_maps, proto, empty, [{}, {}])
+        assert float(losses['loss_mask']) == 0.0
+
+    def test_loss_with_mixed_masks_batch(self):
+        # 一图有 GT+masks,一图空 GT → 不报错,4 个 loss 齐全且可 backward
+        from mmengine.structures import InstanceData
+        head = _seg_head()
+        pred_maps, proto = head(_feats())
+        gts = _gt_with_masks(n_per_img=(2,))  # 第一图 2 个实例
+        empty = InstanceData()
+        empty.bboxes = torch.zeros(0, 4)
+        empty.labels = torch.zeros(0, dtype=torch.int64)
+        empty.masks = torch.zeros(0, 640, 640, dtype=torch.uint8)
+        gts.append(empty)
+        losses = head.loss_by_feat(pred_maps, proto, gts, [{}, {}])
+        assert set(losses) == {'loss_bbox', 'loss_obj', 'loss_cls', 'loss_mask'}
+        sum(losses.values()).backward()
