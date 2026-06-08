@@ -113,3 +113,69 @@ class TestPolygonToMask:
         # 三角形 mask 内部有像素,纯 rectangle 实例 mask 为空(全 0)
         assert masks[0].sum() > 0
         assert masks[1].sum() == 0
+
+
+def _seg_head(nc=2):
+    from mmaivision.models.yolov5.head import YOLOv5SegHead
+    return YOLOv5SegHead(num_classes=nc, in_channels=(64, 128, 256),
+                         num_masks=32)
+
+
+def _feats():
+    # 输入 640 时 P3/P4/P5 = 80/40/20
+    return (torch.randn(2, 64, 80, 80),
+            torch.randn(2, 128, 40, 40),
+            torch.randn(2, 256, 20, 20))
+
+
+def _gt_with_masks(n_per_img=(2, 1), hw=(640, 640)):
+    from mmengine.structures import InstanceData
+    H, W = hw
+    out = []
+    for n in n_per_img:
+        gt = InstanceData()
+        boxes, masks = [], []
+        for k in range(n):
+            x1 = 10 + 30 * k
+            boxes.append([x1, x1, x1 + 40, x1 + 50])
+            m = torch.zeros(H, W, dtype=torch.uint8)
+            m[x1:x1 + 50, x1:x1 + 40] = 1
+            masks.append(m)
+        gt.bboxes = torch.tensor(boxes, dtype=torch.float32)
+        gt.labels = torch.zeros(n, dtype=torch.int64)
+        gt.masks = torch.stack(masks)
+        out.append(gt)
+    return out
+
+
+class TestSegHead:
+    def test_forward_returns_pred_and_proto(self):
+        head = _seg_head()
+        pred_maps, proto = head(_feats())
+        assert len(pred_maps) == 3
+        # 每层通道 = na*(nc+5+nm) = 3*(2+5+32) = 117
+        assert pred_maps[0].shape == (2, 117, 80, 80)
+        assert proto.shape == (2, 32, 160, 160)
+
+    def test_loss_returns_four_terms_and_backward(self):
+        head = _seg_head()
+        pred_maps, proto = head(_feats())
+        losses = head.loss_by_feat(pred_maps, proto, _gt_with_masks(),
+                                   [{}, {}])
+        assert set(losses) == {'loss_bbox', 'loss_obj', 'loss_cls',
+                               'loss_mask'}
+        total = sum(losses.values())
+        total.backward()  # 不报错即图连通
+
+    def test_predict_outputs_masks(self):
+        head = _seg_head()
+        head.score_thr = 0.0  # 强制有输出
+        pred_maps, proto = head(_feats())
+        results = head.predict_by_feat(pred_maps, proto, [{}, {}])
+        assert len(results) == 2
+        r0 = results[0]
+        assert hasattr(r0, 'masks')
+        if r0.bboxes.shape[0] > 0:
+            assert r0.masks.shape[0] == r0.bboxes.shape[0]
+            assert r0.masks.shape[1:] == (640, 640)
+            assert r0.masks.dtype == torch.bool
