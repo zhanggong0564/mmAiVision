@@ -209,3 +209,63 @@ class TestSegHead:
         losses = head.loss_by_feat(pred_maps, proto, gts, [{}, {}])
         assert set(losses) == {'loss_bbox', 'loss_obj', 'loss_cls', 'loss_mask'}
         sum(losses.values()).backward()
+
+
+# ---------------------------------------------------------------------------
+# TestSegDetector helpers
+# ---------------------------------------------------------------------------
+
+def _seg_detector(nc=2):
+    from mmaivision.registry import MODELS
+    cfg = dict(
+        type='YOLOv5SegDetector',
+        data_preprocessor=dict(
+            type='YOLOv5DetDataPreprocessor',
+            mean=[0., 0., 0.], std=[255., 255., 255.],
+            bgr_to_rgb=True, pad_size_divisor=32),
+        backbone=dict(type='YOLOv5CSPDarknet', deepen_factor=0.33,
+                      widen_factor=0.25),
+        neck=dict(type='YOLOv5PAFPN', in_channels=(64, 128, 256),
+                  out_channels=(64, 128, 256), deepen_factor=0.33,
+                  widen_factor=0.25),
+        head=dict(type='YOLOv5SegHead', num_classes=nc,
+                  in_channels=(64, 128, 256), num_masks=32))
+    return MODELS.build(cfg)
+
+
+def _to_model_inputs(model, batch):
+    """走 data_preprocessor 得到 (inputs, data_samples)。"""
+    data = model.data_preprocessor(batch, training=True)
+    return data['inputs'], data['data_samples']
+
+
+def _seg_batch():
+    from mmengine.structures import BaseDataElement
+    inputs = torch.randint(0, 255, (2, 3, 640, 640), dtype=torch.uint8)
+    samples = []
+    gts = _gt_with_masks()
+    for g in gts:
+        ds = BaseDataElement()
+        ds.gt_instances = g
+        ds.set_metainfo(dict(ori_shape=(640, 640), img_shape=(640, 640),
+                             scale_factor=(1.0, 1.0),
+                             pad_param=np.array([0, 0, 0, 0],
+                                                dtype=np.float32)))
+        samples.append(ds)
+    return dict(inputs=list(inputs), data_samples=samples)
+
+
+class TestSegDetector:
+    def test_loss_step(self):
+        import mmaivision  # noqa: F401
+        model = _seg_detector()
+        out = model.loss(*_to_model_inputs(model, _seg_batch()))
+        assert 'loss_mask' in out
+
+    def test_predict_step_attaches_masks(self):
+        model = _seg_detector()
+        model.bbox_head.score_thr = 1e-9
+        model.eval()
+        results = model.test_step(_seg_batch())
+        assert hasattr(results[0], 'pred_instances')
+        assert hasattr(results[0].pred_instances, 'masks')
