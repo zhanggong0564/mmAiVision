@@ -216,7 +216,9 @@ class TestSegHead:
 # ---------------------------------------------------------------------------
 
 def _seg_detector(nc=2):
+    from mmengine.registry import init_default_scope
     from mmaivision.registry import MODELS
+    init_default_scope('mmaivision')
     cfg = dict(
         type='YOLOv5SegDetector',
         data_preprocessor=dict(

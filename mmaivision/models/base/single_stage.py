@@ -20,11 +20,6 @@ class SingleStageDetector(BaseModel):
                  head: dict,
                  data_preprocessor: Optional[dict] = None,
                  init_cfg: Optional[dict] = None):
-        # 用 mmaivision 的 MODELS 提前 build data_preprocessor,
-        # 再以 nn.Module 形式传给 BaseModel,避免 BaseModel 用 mmengine 子
-        # registry 找不到自定义 preprocessor 的问题。
-        if isinstance(data_preprocessor, dict):
-            data_preprocessor = MODELS.build(data_preprocessor)
         super().__init__(
             data_preprocessor=data_preprocessor, init_cfg=init_cfg)
         self.backbone = MODELS.build(backbone)
