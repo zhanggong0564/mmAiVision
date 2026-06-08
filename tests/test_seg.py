@@ -308,3 +308,47 @@ class TestSegMetric:
             gt_masks=[self._mask(12, 12, 18, 18)], gt_labels=[0])])
         out = m.compute_metrics(m.results)
         assert out['mAP_50'] == 0.0
+
+    def test_duplicate_prediction_counts_as_fp(self):
+        # 2 个 GT,两个预测都命中 GT-A(高分 TP、低分重复记 FP),GT-B 漏检。
+        # FP 落在 recall 饱和前 → recall 封顶 0.5,VOC AP = 0.5 < 1。
+        # (单 GT 时重复 FP 落在 recall=1.0 之后,经 VOC 精度包络不降 AP,
+        #  故此处用 2 GT 才能真正暴露 FP 对 AP 的影响。)
+        from mmaivision.evaluation.metrics import LabelmeSegMetric
+        m = LabelmeSegMetric(num_classes=1)
+        a = self._mask(0, 0, 10, 10)
+        b = self._mask(12, 12, 18, 18)
+        m.process(None, [self._ds(
+            pred_masks=[a, a], pred_scores=[0.9, 0.8],
+            pred_labels=[0, 0],
+            gt_masks=[a, b], gt_labels=[0, 0])])
+        out = m.compute_metrics(m.results)
+        assert out['mAP_50'] == 0.5
+
+    def test_class_isolation(self):
+        # 预测类别与 GT 类别不同 → 不匹配,AP=0
+        from mmaivision.evaluation.metrics import LabelmeSegMetric
+        m = LabelmeSegMetric(num_classes=2, class_names=['line', 'QFU'])
+        gtm = self._mask(0, 0, 10, 10)
+        m.process(None, [self._ds(
+            pred_masks=[gtm], pred_scores=[0.9], pred_labels=[1],
+            gt_masks=[gtm], gt_labels=[0])])
+        out = m.compute_metrics(m.results)
+        # class 0 有 GT 无正确预测 → AP0=0;class 1 有预测无 GT → AP1=None 跳过
+        assert out['mAP_50'] == 0.0
+
+    def test_iou_threshold_boundary(self):
+        # IoU 恰好 0.5 应判为 TP(>= 阈值)。
+        # _mask(x1,y1,x2,y2) → m[y1:y2, x1:x2]
+        # gt: rows 0:10, cols 0:10 → area=100
+        # pred: rows 0:10, cols 0:20 → area=200, inter=100, union=200 → IoU=0.5
+        from mmaivision.evaluation.metrics import LabelmeSegMetric
+        gt = self._mask(0, 0, 10, 10)
+        pred = self._mask(0, 0, 20, 10)
+        m = LabelmeSegMetric(num_classes=1, iou_thrs=[0.5])
+        m.process(None, [self._ds(
+            pred_masks=[pred], pred_scores=[0.9], pred_labels=[0],
+            gt_masks=[gt], gt_labels=[0])])
+        out = m.compute_metrics(m.results)
+        # IoU=0.5 >= 0.5 → TP → AP=1.0
+        assert out['mAP_50'] == 1.0

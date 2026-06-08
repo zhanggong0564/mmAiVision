@@ -194,6 +194,7 @@ class LabelmeSegMetric(BaseMetric):
             f'class_{i}' for i in range(num_classes)]
 
     def process(self, data_batch, data_samples: List[dict]) -> None:
+        """每个 data_sample 已被 Evaluator 转成 dict(含 gt/pred_instances)。"""
         for ds in data_samples:
             pred = ds['pred_instances']
             gt = ds['gt_instances']
@@ -206,6 +207,7 @@ class LabelmeSegMetric(BaseMetric):
 
     def _ap_per_class(self, results: List[dict], cls: int,
                       iou_thr: float) -> Optional[float]:
+        """单类、单 IoU 阈值的 mask AP。无该类 GT 时返回 None。"""
         preds = []
         n_gt = 0
         gt_by_img = []
