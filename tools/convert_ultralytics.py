@@ -117,7 +117,9 @@ def build_target_model(size, num_classes, seg=False, num_masks=32):
             neck=dict(type='YOLOv5PAFPN', in_channels=p3p4p5,
                       out_channels=p3p4p5, deepen_factor=d, widen_factor=w),
             head=dict(type='YOLOv5SegHead', num_classes=num_classes,
-                      in_channels=p3p4p5, num_masks=num_masks),
+                      in_channels=p3p4p5, num_masks=num_masks,
+                      # ultralytics Proto 通道 npr=256 经 width_multiple 缩放
+                      proto_channels=make_divisible(256 * w, 8)),
         )
     else:
         cfg = dict(
@@ -290,24 +292,35 @@ def remap(target_sd, ultra_sd, extra_prefix=None):
 def verify(target_model, ultra_model, num_classes, na, seg=False, nm=32):
     """同一输入喂两网，比对原始 conv 输出的最大绝对误差。
 
-    seg 模式仅比对检测分支的原始输出，且做容错：若官方 seg 模型输出结构
-    与预期不符，打印告警并返回 None（视为跳过），不让校验崩溃整个流程。
+    检测分支:逐层比对 raw conv 输出 (b, na, h, w, no)。
+    seg 模式额外比对 proto 原型输出。任一环节结构与预期不符则打印告警并返回
+    None（视为跳过），不让校验崩溃整个流程。
+
+    ultralytics eval 输出结构:
+      det: (decoded(b,N,no), raw_list[3])               -> raw 在 [1]
+      seg: (decoded(b,N,no), proto(b,nm,H,W), raw_list[3]) -> proto 在 [1]、raw 在 [2]
     """
     target_model.cpu().eval()
     ultra_model.cpu().eval()
     im = torch.rand(1, 3, 640, 640)
     out = target_model(im, mode='tensor')
-    # seg 时 forward 返回 (pred_maps, proto);只比对检测分支 pred_maps,不验证 proto 分支
+    # seg 时 forward 返回 (pred_maps, proto)
     ours = out[0] if seg else out
+    ours_proto = out[1] if seg else None
     no = num_classes + 5 + (nm if seg else 0)
     try:
         ul = ultra_model(im)
-        ul_raw = ul[1]                     # detect 分支三层原始输出
+        ul_raw = ul[2] if seg else ul[1]   # detect 分支三层原始输出
         max_diff = 0.0
         for o, u in zip(ours, ul_raw):
             b, _, h, w = o.shape
             o = o.view(b, na, no, h, w).permute(0, 1, 3, 4, 2).contiguous()
             max_diff = max(max_diff, (o - u).abs().max().item())
+        if seg:
+            # proto 分支:官方 ul[1] 形状 (b, nm, H, W),与本仓库一致
+            ul_proto = ul[1]
+            max_diff = max(max_diff,
+                           (ours_proto - ul_proto).abs().max().item())
         return max_diff
     except Exception as e:  # noqa: BLE001
         if seg:
