@@ -238,9 +238,9 @@ def load_ultralytics(hub, size, weights, seg=False):
     repo = _ensure_local_repo(hub)
     if seg and not weights:
         raise SystemExit(
-            'seg 模式需要 --weights 指定本地 yolov5{size}-seg.pt'
-            '（ultralytics 无 yolov5-seg 的 torch.hub 命名入口,'
-            '请先从官方 release 下载对应 .pt）。')
+            f'seg 模式需要 --weights 指定本地 yolov5{size}-seg.pt'
+            '(ultralytics 无 yolov5-seg 的 torch.hub 命名入口,'
+            '请先从官方 release 下载对应 .pt)。')
     if weights:
         model = torch.hub.load(
             repo, 'custom', path=weights, source='local',
@@ -297,7 +297,8 @@ def verify(target_model, ultra_model, num_classes, na, seg=False, nm=32):
     ultra_model.cpu().eval()
     im = torch.rand(1, 3, 640, 640)
     out = target_model(im, mode='tensor')
-    ours = out[0] if seg else out          # seg 时取 pred_maps
+    # seg 时 forward 返回 (pred_maps, proto);只比对检测分支 pred_maps,不验证 proto 分支
+    ours = out[0] if seg else out
     no = num_classes + 5 + (nm if seg else 0)
     try:
         ul = ultra_model(im)
@@ -317,6 +318,11 @@ def verify(target_model, ultra_model, num_classes, na, seg=False, nm=32):
 
 def main():
     args = parse_args()
+    if args.seg and not args.weights:
+        raise SystemExit(
+            f'seg 模式需要 --weights 指定本地 yolov5{args.size}-seg.pt'
+            '(ultralytics 无 yolov5-seg 的 torch.hub 命名入口,'
+            '请先从官方 release 下载对应 .pt)。')
     out = args.out or (
         f'work_dirs/yolov5{args.size}{"_seg" if args.seg else ""}_official.pth')
 
@@ -329,10 +335,7 @@ def main():
                                 seg=args.seg, num_masks=args.num_masks)
     target_sd = target.state_dict()
 
-    if args.seg:
-        src = args.weights or f'<需要本地 yolov5{args.size}-seg.pt>'
-    else:
-        src = args.weights or f'torch.hub:{args.hub}:yolov5{args.size}'
+    src = args.weights or f'torch.hub:{args.hub}:yolov5{args.size}'
     print(f'[2/4] 载入 ultralytics 官方模型 ({src}) ...')
     ultra = load_ultralytics(args.hub, args.size, args.weights, seg=args.seg)
     ultra_sd = ultra.state_dict()
@@ -359,6 +362,7 @@ def main():
     target.load_state_dict(converted, strict=True)
     print('      strict load_state_dict 成功，全部参数覆盖。')
 
+    verify_meta = None
     if not args.no_verify:
         print('[4/4] 端到端数值等价校验 ...')
         na = target.bbox_head.num_base_priors
@@ -366,21 +370,27 @@ def main():
                       seg=args.seg, nm=args.num_masks)
         if diff is None:
             print('      数值校验已跳过（seg 模式输出结构不符，见上方告警）。')
+            verify_meta = 'skipped (seg structure mismatch)'
         else:
             tag = 'PASS ✅' if diff < 1e-4 else 'FAIL ❌'
             print(f'      原始输出最大绝对误差 = {diff:.3e}  ->  {tag}')
             if diff >= 1e-4:
                 raise SystemExit('数值校验未通过，转换结果与官方不等价。')
+            verify_meta = diff
     else:
         print('[4/4] 跳过数值校验 (--no-verify)')
+        verify_meta = 'skipped (--no-verify)'
 
     import os
     os.makedirs(osp.dirname(out) or '.', exist_ok=True)
+    if verify_meta in ('skipped (seg structure mismatch)', 'skipped (--no-verify)'):
+        print('      [注意] 数值校验已跳过,本权重未经等价性验证。')
     torch.save(
         dict(state_dict=converted,
              meta=dict(source='ultralytics/yolov5', size=args.size,
                        num_classes=args.num_classes,
-                       seg=args.seg, num_masks=args.num_masks)),
+                       seg=args.seg, num_masks=args.num_masks,
+                       verify=verify_meta)),
         out)
     print(f'已保存转换权重 -> {out}')
 

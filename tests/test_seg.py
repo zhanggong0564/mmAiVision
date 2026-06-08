@@ -358,6 +358,7 @@ class TestConvertSegMapping:
     def test_seg_target_keys_all_have_prefix(self):
         # 不需要网络:构建 seg 目标模型,验证其每个 state_dict key 都能被
         # PREFIX_MAP ∪ SEG_EXTRA_PREFIX_MAP 的某个前缀匹配到(映射表完整)。
+        # convert_ultralytics.py 在 tools/ 下,非包成员,用文件路径动态加载(导入即触发 mmaivision 注册)。
         import importlib.util, os
         spec = importlib.util.spec_from_file_location(
             'convert_ultra',
