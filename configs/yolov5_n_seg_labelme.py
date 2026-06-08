@@ -51,8 +51,9 @@ model = dict(
         bbox_coder=dict(type='YOLOv5BBoxCoder'),
         assigner=dict(type='YOLOv5BatchAssigner', num_classes=num_classes,
                       strides=strides),
+        # proto 中间通道 = 256 * widen_factor(0.25) = 64,需与官方 yolov5n-seg 权重一致
         num_masks=num_masks,
-        proto_channels=256,
+        proto_channels=64,
         loss_box_weight=0.05,
         loss_obj_weight=1.0,
         loss_cls_weight=0.5,
