@@ -458,7 +458,9 @@ class YOLOv5SegHead(YOLOv5Head):
         area = (bw * bh).clamp(min=1e-6)
 
         loss = F.binary_cross_entropy_with_logits(pred, gt, reduction='none')
-        return (self._crop_mask(loss, boxes).mean(dim=(1, 2)) / area).mean()
+        # 框内 BCE 之和 / 框面积 = 框内像素平均 BCE(O(1));用 sum 而非 mean
+        # 避免再除以整张 proto 面积(Hm*Wm)导致 loss 被额外缩小 ~2.5e4 倍。
+        return (self._crop_mask(loss, boxes).sum(dim=(1, 2)) / area).mean()
 
     def predict_by_feat(self, pred_maps, proto, batch_img_metas):
         B = pred_maps[0].shape[0]

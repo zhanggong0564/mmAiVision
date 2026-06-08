@@ -210,6 +210,16 @@ class TestSegHead:
         assert set(losses) == {'loss_bbox', 'loss_obj', 'loss_cls', 'loss_mask'}
         sum(losses.values()).backward()
 
+    def test_loss_mask_magnitude_not_vanishing(self):
+        # 回归:mask loss 用框内像素平均 BCE(O(1)),不应因双重归一化被缩到 ~0。
+        # 修复前(.mean over 整张 proto 再除框面积)此值约 1e-6,会让 mask 不训练。
+        torch.manual_seed(0)
+        head = _seg_head()
+        pred_maps, proto = head(_feats())
+        losses = head.loss_by_feat(pred_maps, proto, _gt_with_masks(),
+                                   [{}, {}])
+        assert float(losses['loss_mask']) > 1e-3
+
 
 # ---------------------------------------------------------------------------
 # TestSegDetector helpers
