@@ -44,6 +44,19 @@ def _voc_ap(recall: np.ndarray, precision: np.ndarray) -> float:
     return float(np.sum((mrec[idx + 1] - mrec[idx]) * mpre[idx + 1]))
 
 
+def _mask_iou_matrix(masks1: np.ndarray, masks2: np.ndarray) -> np.ndarray:
+    """``(N, M)`` mask IoU,输入均为 bool ``(K, H, W)``。"""
+    if masks1.shape[0] == 0 or masks2.shape[0] == 0:
+        return np.zeros((masks1.shape[0], masks2.shape[0]), dtype=np.float32)
+    a = masks1.reshape(masks1.shape[0], -1).astype(np.float32)
+    b = masks2.reshape(masks2.shape[0], -1).astype(np.float32)
+    inter = a @ b.T
+    area1 = a.sum(axis=1)[:, None]
+    area2 = b.sum(axis=1)[None, :]
+    union = np.clip(area1 + area2 - inter, a_min=1e-7, a_max=None)
+    return inter / union
+
+
 @METRICS.register_module()
 class LabelmeDetMetric(BaseMetric):
     """VOC 风格检测 mAP 指标。
@@ -151,6 +164,111 @@ class LabelmeDetMetric(BaseMetric):
             metrics[f'AP50_{name}'] = ap
 
         logger.info('mAP=%.4f  %s' % (
+            metrics['mAP'],
+            '  '.join(f'{k}={v:.4f}' for k, v in per_class_ap50.items())))
+        return metrics
+
+
+@METRICS.register_module()
+class LabelmeSegMetric(BaseMetric):
+    """VOC 风格实例分割 mask mAP 指标(自包含,不依赖 pycocotools)。
+
+    与 ``LabelmeDetMetric`` 结构一致,把 bbox IoU 换成 mask IoU。pred 与 gt
+    mask 均在模型输入(letterbox)坐标系下比较。
+    """
+
+    default_prefix = 'labelme_seg'
+
+    def __init__(self,
+                 num_classes: int,
+                 iou_thrs: Sequence[float] = (0.5, ),
+                 class_names: Optional[Sequence[str]] = None,
+                 collect_device: str = 'cpu',
+                 prefix: Optional[str] = None):
+        super().__init__(collect_device=collect_device, prefix=prefix)
+        if num_classes < 1:
+            raise ValueError(f'num_classes 必须 >= 1, got {num_classes}')
+        self.num_classes = num_classes
+        self.iou_thrs = list(iou_thrs)
+        self.class_names = list(class_names) if class_names else [
+            f'class_{i}' for i in range(num_classes)]
+
+    def process(self, data_batch, data_samples: List[dict]) -> None:
+        for ds in data_samples:
+            pred = ds['pred_instances']
+            gt = ds['gt_instances']
+            self.results.append(dict(
+                pred_masks=_to_numpy(pred['masks']).astype(bool),
+                pred_scores=_to_numpy(pred['scores']).reshape(-1),
+                pred_labels=_to_numpy(pred['labels']).reshape(-1),
+                gt_masks=_to_numpy(gt['masks']).astype(bool),
+                gt_labels=_to_numpy(gt['labels']).reshape(-1)))
+
+    def _ap_per_class(self, results: List[dict], cls: int,
+                      iou_thr: float) -> Optional[float]:
+        preds = []
+        n_gt = 0
+        gt_by_img = []
+        for img_idx, r in enumerate(results):
+            gm = r['gt_labels'] == cls
+            gt_m = r['gt_masks'][gm]
+            n_gt += gt_m.shape[0]
+            gt_by_img.append(dict(
+                masks=gt_m, matched=np.zeros(gt_m.shape[0], dtype=bool)))
+            pm = r['pred_labels'] == cls
+            for mask, s in zip(r['pred_masks'][pm], r['pred_scores'][pm]):
+                preds.append((img_idx, float(s), mask))
+        if n_gt == 0:
+            return None
+        if not preds:
+            return 0.0
+
+        preds.sort(key=lambda x: x[1], reverse=True)
+        tp = np.zeros(len(preds), dtype=np.float32)
+        fp = np.zeros(len(preds), dtype=np.float32)
+        for i, (img_idx, _, mask) in enumerate(preds):
+            g = gt_by_img[img_idx]
+            if g['masks'].shape[0] == 0:
+                fp[i] = 1
+                continue
+            ious = _mask_iou_matrix(mask[None, ...], g['masks'])[0]
+            j = int(np.argmax(ious))
+            if ious[j] >= iou_thr and not g['matched'][j]:
+                tp[i] = 1
+                g['matched'][j] = True
+            else:
+                fp[i] = 1
+
+        tp_cum = np.cumsum(tp)
+        fp_cum = np.cumsum(fp)
+        recall = tp_cum / n_gt
+        precision = tp_cum / np.clip(tp_cum + fp_cum, a_min=1e-7, a_max=None)
+        return _voc_ap(recall, precision)
+
+    def compute_metrics(self, results: List[dict]) -> dict:
+        logger = MMLogger.get_current_instance()
+        per_thr_map = []
+        per_class_ap50 = {}
+        for thr in self.iou_thrs:
+            aps = []
+            for cls in range(self.num_classes):
+                ap = self._ap_per_class(results, cls, thr)
+                if ap is None:
+                    continue
+                aps.append(ap)
+                if abs(thr - 0.5) < 1e-6:
+                    per_class_ap50[self.class_names[cls]] = ap
+            per_thr_map.append(float(np.mean(aps)) if aps else 0.0)
+
+        metrics = {}
+        metrics['mAP'] = float(np.mean(per_thr_map)) if per_thr_map else 0.0
+        if any(abs(t - 0.5) < 1e-6 for t in self.iou_thrs):
+            i = [abs(t - 0.5) < 1e-6 for t in self.iou_thrs].index(True)
+            metrics['mAP_50'] = per_thr_map[i]
+        for name, ap in per_class_ap50.items():
+            metrics[f'AP50_{name}'] = ap
+
+        logger.info('seg mAP=%.4f  %s' % (
             metrics['mAP'],
             '  '.join(f'{k}={v:.4f}' for k, v in per_class_ap50.items())))
         return metrics

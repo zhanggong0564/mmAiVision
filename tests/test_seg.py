@@ -271,3 +271,40 @@ class TestSegDetector:
         assert hasattr(results[0], 'pred_instances')
         assert hasattr(results[0].pred_instances, 'masks')
         assert results[0].pred_instances.masks.shape[0] > 0
+
+
+class TestSegMetric:
+    def _ds(self, pred_masks, pred_scores, pred_labels, gt_masks, gt_labels):
+        return dict(
+            pred_instances=dict(
+                masks=torch.as_tensor(np.asarray(pred_masks), dtype=torch.bool),
+                scores=torch.as_tensor(pred_scores, dtype=torch.float32),
+                labels=torch.as_tensor(pred_labels, dtype=torch.int64)),
+            gt_instances=dict(
+                masks=torch.as_tensor(np.asarray(gt_masks), dtype=torch.bool),
+                labels=torch.as_tensor(gt_labels, dtype=torch.int64)))
+
+    def _mask(self, x1, y1, x2, y2, H=20, W=20):
+        m = np.zeros((H, W), dtype=bool)
+        m[y1:y2, x1:x2] = True
+        return m
+
+    def test_perfect_prediction(self):
+        from mmaivision.evaluation.metrics import LabelmeSegMetric
+        m = LabelmeSegMetric(num_classes=2, class_names=['line', 'QFU'])
+        gt = [self._mask(0, 0, 10, 10), self._mask(12, 12, 18, 18)]
+        m.process(None, [self._ds(
+            pred_masks=gt, pred_scores=[0.9, 0.8], pred_labels=[0, 1],
+            gt_masks=gt, gt_labels=[0, 1])])
+        out = m.compute_metrics(m.results)
+        assert out['mAP_50'] == 1.0
+
+    def test_no_overlap_zero(self):
+        from mmaivision.evaluation.metrics import LabelmeSegMetric
+        m = LabelmeSegMetric(num_classes=1)
+        m.process(None, [self._ds(
+            pred_masks=[self._mask(0, 0, 5, 5)], pred_scores=[0.9],
+            pred_labels=[0],
+            gt_masks=[self._mask(12, 12, 18, 18)], gt_labels=[0])])
+        out = m.compute_metrics(m.results)
+        assert out['mAP_50'] == 0.0
