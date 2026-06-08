@@ -259,7 +259,6 @@ def _seg_batch():
 
 class TestSegDetector:
     def test_loss_step(self):
-        import mmaivision  # noqa: F401
         model = _seg_detector()
         out = model.loss(*_to_model_inputs(model, _seg_batch()))
         assert 'loss_mask' in out
@@ -271,3 +270,4 @@ class TestSegDetector:
         results = model.test_step(_seg_batch())
         assert hasattr(results[0], 'pred_instances')
         assert hasattr(results[0].pred_instances, 'masks')
+        assert results[0].pred_instances.masks.shape[0] > 0

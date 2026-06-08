@@ -35,6 +35,7 @@ class YOLOv5SegDetector(SingleStageDetector):
         if data_samples is not None:
             batch_metas = [s.metainfo for s in data_samples]
         else:
+            # head.predict_by_feat 当前不读 batch_img_metas,仅提供 batch_input_shape 占位
             batch_metas = [dict(batch_input_shape=tuple(inputs.shape[-2:]))
                            ] * inputs.shape[0]
         results_list = self.bbox_head.predict_by_feat(
