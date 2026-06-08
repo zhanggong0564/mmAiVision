@@ -363,6 +363,50 @@ class TestSegMetric:
         # IoU=0.5 >= 0.5 → TP → AP=1.0
         assert out['mAP_50'] == 1.0
 
+    def test_streaming_does_not_retain_dense_masks(self):
+        # 回归:metric 不得在 process 后保留整个验证集的稠密 mask,否则大验证集
+        # (如 345 图 × ~300 实例 × 640²)会 OOM。流式实现只保留每条预测的标量
+        # (score/label/tp)与逐类 GT 计数,累计存储应远小于原始 mask 体积。
+        from mmaivision.evaluation.metrics import LabelmeSegMetric
+        m = LabelmeSegMetric(num_classes=2)
+        rng = np.random.default_rng(0)
+        n_img, n_inst, H, W = 8, 12, 48, 48
+        raw_mask_bytes = 0
+        for _ in range(n_img):
+            masks = rng.random((n_inst, H, W)) > 0.5
+            raw_mask_bytes += masks.nbytes * 2  # pred + gt
+            m.process(None, [self._ds(
+                pred_masks=masks, pred_scores=rng.random(n_inst),
+                pred_labels=rng.integers(0, 2, n_inst),
+                gt_masks=masks, gt_labels=rng.integers(0, 2, n_inst))])
+
+        def nbytes(obj):
+            if isinstance(obj, np.ndarray):
+                return obj.nbytes
+            if isinstance(obj, dict):
+                return sum(nbytes(v) for v in obj.values())
+            return 0
+        stored = sum(nbytes(r) for r in m.results)
+        assert stored < raw_mask_bytes * 0.01, (
+            f'metric 保留了过多数据: {stored} bytes vs raw mask {raw_mask_bytes}')
+        out = m.compute_metrics(m.results)  # 仍可正常出指标
+        assert 'mAP_50' in out
+
+    def test_cross_image_score_ordering(self):
+        # 跨图全局排序:图 B 的高分 FP(0.95)须排在图 A 的低分 TP(0.9)之前。
+        # n_gt=2 → recall 顶 0.5,VOC AP=0.25(逐图贪心匹配 + 全局按分排序的结果)。
+        from mmaivision.evaluation.metrics import LabelmeSegMetric
+        m = LabelmeSegMetric(num_classes=1)
+        gt = self._mask(0, 0, 10, 10)
+        far = self._mask(15, 15, 19, 19)
+        img_a = self._ds(pred_masks=[gt], pred_scores=[0.9], pred_labels=[0],
+                         gt_masks=[gt], gt_labels=[0])      # TP @0.9
+        img_b = self._ds(pred_masks=[far], pred_scores=[0.95], pred_labels=[0],
+                         gt_masks=[gt], gt_labels=[0])      # FP @0.95
+        m.process(None, [img_a, img_b])
+        out = m.compute_metrics(m.results)
+        assert abs(out['mAP_50'] - 0.25) < 1e-6
+
 
 class TestConvertSegMapping:
     def test_seg_target_keys_all_have_prefix(self):

@@ -194,55 +194,74 @@ class LabelmeSegMetric(BaseMetric):
             f'class_{i}' for i in range(num_classes)]
 
     def process(self, data_batch, data_samples: List[dict]) -> None:
-        """每个 data_sample 已被 Evaluator 转成 dict(含 gt/pred_instances)。"""
+        """逐图即时匹配:masks 在手时就算 IoU 与贪心 TP/FP,只保留标量结果。
+
+        若像检测那样把整个验证集的稠密 mask 堆在内存里(如 345 图 × ~300 实例
+        × 640²),会直接 OOM。这里每张图只保留:各预测的 score/label、各 IoU
+        阈值下的 TP 标记,以及逐类 GT 计数。逐图按分数降序贪心匹配与“全局排序后
+        贪心”等价(GT 只在本图内与预测竞争),故 mAP 与稠密实现完全一致。
+        """
+        n_thr = len(self.iou_thrs)
         for ds in data_samples:
             pred = ds['pred_instances']
             gt = ds['gt_instances']
+            pred_scores = _to_numpy(pred['scores']).reshape(-1)
+            pred_labels = _to_numpy(pred['labels']).reshape(-1)
+            pred_masks = _to_numpy(pred['masks']).astype(bool)
+            gt_masks = _to_numpy(gt['masks']).astype(bool)
+            gt_labels = _to_numpy(gt['labels']).reshape(-1)
+
+            num_pred = pred_scores.shape[0]
+            tp = np.zeros((n_thr, num_pred), dtype=bool)
+            gt_count = np.bincount(
+                gt_labels.astype(np.int64),
+                minlength=self.num_classes)[:self.num_classes]
+
+            for cls in range(self.num_classes):
+                p_idx = np.nonzero(pred_labels == cls)[0]
+                g_sel = gt_labels == cls
+                if p_idx.size == 0 or not g_sel.any():
+                    continue  # 无该类预测,或无该类 GT(预测全记 FP → tp 保持 False)
+                # 该类预测按分数降序(= 全局降序在本图内的投影),逐条贪心匹配
+                order = p_idx[np.argsort(-pred_scores[p_idx], kind='stable')]
+                ious = _mask_iou_matrix(pred_masks[order], gt_masks[g_sel])
+                for ti, thr in enumerate(self.iou_thrs):
+                    matched = np.zeros(ious.shape[1], dtype=bool)
+                    for rank, gi in enumerate(order):
+                        j = int(np.argmax(ious[rank]))
+                        if ious[rank, j] >= thr and not matched[j]:
+                            tp[ti, gi] = True
+                            matched[j] = True
             self.results.append(dict(
-                pred_masks=_to_numpy(pred['masks']).astype(bool),
-                pred_scores=_to_numpy(pred['scores']).reshape(-1),
-                pred_labels=_to_numpy(pred['labels']).reshape(-1),
-                gt_masks=_to_numpy(gt['masks']).astype(bool),
-                gt_labels=_to_numpy(gt['labels']).reshape(-1)))
+                pred_scores=pred_scores.astype(np.float32),
+                pred_labels=pred_labels,
+                tp=tp,
+                gt_count=gt_count.astype(np.int64)))
 
     def _ap_per_class(self, results: List[dict], cls: int,
-                      iou_thr: float) -> Optional[float]:
-        """单类、单 IoU 阈值的 mask AP。无该类 GT 时返回 None。"""
-        preds = []
-        n_gt = 0
-        gt_by_img = []
-        for img_idx, r in enumerate(results):
-            gm = r['gt_labels'] == cls
-            gt_m = r['gt_masks'][gm]
-            n_gt += gt_m.shape[0]
-            gt_by_img.append(dict(
-                masks=gt_m, matched=np.zeros(gt_m.shape[0], dtype=bool)))
-            pm = r['pred_labels'] == cls
-            for mask, s in zip(r['pred_masks'][pm], r['pred_scores'][pm]):
-                preds.append((img_idx, float(s), mask))
+                      thr_idx: int) -> Optional[float]:
+        """单类、单 IoU 阈值的 mask AP;TP/FP 已在 process 阶段逐图算好。
+
+        汇总各图该类预测的 (score, tp),按分数全局降序累积 PR → VOC AP。
+        无该类 GT 时返回 None。
+        """
+        n_gt = int(sum(int(r['gt_count'][cls]) for r in results))
         if n_gt == 0:
             return None
-        if not preds:
+        scores, tps = [], []
+        for r in results:
+            sel = r['pred_labels'] == cls
+            if sel.any():
+                scores.append(r['pred_scores'][sel])
+                tps.append(r['tp'][thr_idx][sel])
+        if not scores:
             return 0.0
-
-        preds.sort(key=lambda x: x[1], reverse=True)
-        tp = np.zeros(len(preds), dtype=np.float32)
-        fp = np.zeros(len(preds), dtype=np.float32)
-        for i, (img_idx, _, mask) in enumerate(preds):
-            g = gt_by_img[img_idx]
-            if g['masks'].shape[0] == 0:
-                fp[i] = 1
-                continue
-            ious = _mask_iou_matrix(mask[None, ...], g['masks'])[0]
-            j = int(np.argmax(ious))
-            if ious[j] >= iou_thr and not g['matched'][j]:
-                tp[i] = 1
-                g['matched'][j] = True
-            else:
-                fp[i] = 1
-
+        scores = np.concatenate(scores)
+        tp = np.concatenate(tps).astype(np.float32)
+        order = np.argsort(-scores, kind='stable')
+        tp = tp[order]
         tp_cum = np.cumsum(tp)
-        fp_cum = np.cumsum(fp)
+        fp_cum = np.cumsum(1.0 - tp)
         recall = tp_cum / n_gt
         precision = tp_cum / np.clip(tp_cum + fp_cum, a_min=1e-7, a_max=None)
         return _voc_ap(recall, precision)
@@ -251,10 +270,10 @@ class LabelmeSegMetric(BaseMetric):
         logger = MMLogger.get_current_instance()
         per_thr_map = []
         per_class_ap50 = {}
-        for thr in self.iou_thrs:
+        for ti, thr in enumerate(self.iou_thrs):
             aps = []
             for cls in range(self.num_classes):
-                ap = self._ap_per_class(results, cls, thr)
+                ap = self._ap_per_class(results, cls, ti)
                 if ap is None:
                     continue
                 aps.append(ap)
