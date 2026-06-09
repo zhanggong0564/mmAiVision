@@ -7,6 +7,8 @@
 from typing import List, Optional, Sequence
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 from mmengine.evaluator import BaseMetric
 from mmengine.logging import MMLogger
 
@@ -17,6 +19,27 @@ def _to_numpy(x) -> np.ndarray:
     if hasattr(x, 'detach'):
         x = x.detach().cpu().numpy()
     return np.asarray(x)
+
+
+def _resize_masks_for_eval(masks, size: Optional[int]):
+    """把实例 mask 降采样到固定边长用于评估,大幅降低 mask IoU 的内存与算力。
+
+    实例 mask IoU 对降采样不敏感,在低分辨率(如 256²)上评估与全分辨率几乎一致,
+    却能省下「GPU→CPU 大数组传输 + CPU 上的大 matmul」两笔主要开销。对线标这类
+    又细又密的目标,用 adaptive **max** pool(任一子像素为 1 即置 1)避免细线在
+    低分辨率下整段丢失;pred/gt 同样处理,保证 IoU 仍可比。
+
+    在 ``_to_numpy`` 之前调用:若 mask 仍是 GPU 张量,降采样在 GPU 上完成,
+    随后只需搬运缩小后的数组。
+    """
+    if size is None:
+        return masks
+    t = masks if isinstance(masks, torch.Tensor) else torch.as_tensor(
+        np.asarray(masks))
+    if t.shape[0] == 0 or max(t.shape[-2:]) <= size:
+        return masks
+    m = F.adaptive_max_pool2d(t.unsqueeze(1).float(), (size, size))
+    return m.squeeze(1) > 0.5
 
 
 def _bbox_iou_matrix(boxes1: np.ndarray, boxes2: np.ndarray) -> np.ndarray:
@@ -183,13 +206,20 @@ class LabelmeSegMetric(BaseMetric):
                  num_classes: int,
                  iou_thrs: Sequence[float] = (0.5, ),
                  class_names: Optional[Sequence[str]] = None,
+                 mask_eval_size: Optional[int] = 256,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None):
         super().__init__(collect_device=collect_device, prefix=prefix)
         if num_classes < 1:
             raise ValueError(f'num_classes 必须 >= 1, got {num_classes}')
+        if mask_eval_size is not None and mask_eval_size < 1:
+            raise ValueError(
+                f'mask_eval_size 必须为 None 或 >= 1, got {mask_eval_size}')
         self.num_classes = num_classes
         self.iou_thrs = list(iou_thrs)
+        # 评估用 mask 边长上限:None 表示按全分辨率算 IoU(慢);默认 256 在
+        # 几乎不损精度的前提下把验证耗时降一个量级(见 _resize_masks_for_eval)。
+        self.mask_eval_size = mask_eval_size
         self.class_names = list(class_names) if class_names else [
             f'class_{i}' for i in range(num_classes)]
 
@@ -207,8 +237,14 @@ class LabelmeSegMetric(BaseMetric):
             gt = ds['gt_instances']
             pred_scores = _to_numpy(pred['scores']).reshape(-1)
             pred_labels = _to_numpy(pred['labels']).reshape(-1)
-            pred_masks = _to_numpy(pred['masks']).astype(bool)
-            gt_masks = _to_numpy(gt['masks']).astype(bool)
+            # 在搬到 CPU 之前先在原设备(通常 GPU)上降采样,缩小后再转 numpy:
+            # 既减少 GPU→CPU 传输量,又把后续 mask IoU matmul 的规模降一个量级。
+            pred_masks = _to_numpy(
+                _resize_masks_for_eval(pred['masks'], self.mask_eval_size)
+            ).astype(bool)
+            gt_masks = _to_numpy(
+                _resize_masks_for_eval(gt['masks'], self.mask_eval_size)
+            ).astype(bool)
             gt_labels = _to_numpy(gt['labels']).reshape(-1)
 
             num_pred = pred_scores.shape[0]
@@ -270,6 +306,8 @@ class LabelmeSegMetric(BaseMetric):
         logger = MMLogger.get_current_instance()
         per_thr_map = []
         per_class_ap50 = {}
+        # 逐类跨阈值 AP:用于诊断"检出 vs 边界精度",细长目标在高 IoU 下退化更明显
+        per_class_thr_aps = {name: [] for name in self.class_names}
         for ti, thr in enumerate(self.iou_thrs):
             aps = []
             for cls in range(self.num_classes):
@@ -277,6 +315,7 @@ class LabelmeSegMetric(BaseMetric):
                 if ap is None:
                     continue
                 aps.append(ap)
+                per_class_thr_aps[self.class_names[cls]].append(ap)
                 if abs(thr - 0.5) < 1e-6:
                     per_class_ap50[self.class_names[cls]] = ap
             per_thr_map.append(float(np.mean(aps)) if aps else 0.0)
@@ -288,8 +327,35 @@ class LabelmeSegMetric(BaseMetric):
             metrics['mAP_50'] = per_thr_map[i]
         for name, ap in per_class_ap50.items():
             metrics[f'AP50_{name}'] = ap
+        # 逐类跨阈值平均 AP(单阈值时等同该类 AP50,多阈值时为 COCO 风格逐类 mAP)
+        per_class_map = {}
+        for name, aps in per_class_thr_aps.items():
+            if aps:
+                per_class_map[name] = float(np.mean(aps))
+                metrics[f'mAP_{name}'] = per_class_map[name]
 
-        logger.info('seg mAP=%.4f  %s' % (
-            metrics['mAP'],
-            '  '.join(f'{k}={v:.4f}' for k, v in per_class_ap50.items())))
+        # ---- 表格化日志:每列标清阈值,避免不同阈值指标混排 ----
+        has_strict = len(self.iou_thrs) > 1
+        lo, hi = self.iou_thrs[0], self.iou_thrs[-1]
+        main_hdr = f'mAP@[{lo:g}:{hi:g}]' if has_strict else f'AP@{lo:g}'
+        show_50 = has_strict and 'mAP_50' in metrics  # 严格档时额外列出 AP@.5
+        rows = ['seg mask 评估 (按类别 macro 平均):']
+        hdr = f'  {"class":<14}{main_hdr:>16}'
+        if show_50:
+            hdr += f'{"AP@.5":>10}'
+        rows.append(hdr)
+        rows.append('  ' + '-' * (len(hdr) - 2))
+        for name in self.class_names:
+            if name not in per_class_map:
+                continue  # 无该类 GT
+            row = f'  {name:<14}{per_class_map[name]:>16.4f}'
+            if show_50:
+                row += f'{per_class_ap50.get(name, float("nan")):>10.4f}'
+            rows.append(row)
+        rows.append('  ' + '-' * (len(hdr) - 2))
+        all_row = f'  {"ALL (mean)":<14}{metrics["mAP"]:>16.4f}'
+        if show_50:
+            all_row += f'{metrics["mAP_50"]:>10.4f}'
+        rows.append(all_row)
+        logger.info('\n'.join(rows))
         return metrics
