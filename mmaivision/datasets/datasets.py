@@ -65,6 +65,18 @@ class LabelmeDetDataset(BaseDataset):
             f'per-class counts: {dict(per_class)}')
         return data_list
 
+    def prepare_data(self, idx: int) -> Any:
+        """注入 dataset 引用供 Mosaic / MixUp 等多图增强取样。
+
+        训练阶段把 ``self`` 放进 results,使多图增强能 ``get_data_info`` 取其他
+        样本;``test_mode`` 下不注入(验证 / 测试 pipeline 不含多图增强)。
+        注入发生在 ``get_data_info`` 之后,不进入被 deepcopy 的数据,故不会递归。
+        """
+        data_info = self.get_data_info(idx)
+        if not self.test_mode:
+            data_info['dataset'] = self
+        return self.pipeline(data_info)
+
     def filter_data(self) -> List[Dict[str, Any]]:
         """根据 filter_cfg 过滤 data_list。
 
