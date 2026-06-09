@@ -3,6 +3,7 @@ from typing import Sequence, Tuple
 
 from mmengine.model import BaseModule
 from torch import Tensor, nn
+from torch.nn.modules.batchnorm import _BatchNorm
 
 from mmaivision.registry import MODELS
 from .common import C3, SPPF, Conv, make_divisible
@@ -18,6 +19,11 @@ class YOLOv5CSPDarknet(BaseModule):
         deepen_factor: C3 块数 n 的乘子(对应 ultralytics depth_multiple)。
         widen_factor: 通道数 c 的乘子(对应 ultralytics width_multiple)。
         out_indices: 取哪几个 stage 作为输出,默认 (2, 3, 4) → P3/P4/P5。
+        frozen_stages: 冻结到第几阶段(含)。-1 不冻结;0 冻 stem;
+            1 冻 stem+stage1;...;4 冻整个 backbone。被冻结层 requires_grad=False
+            且 BN 切 eval(不更新滑动均值)。
+        norm_eval: 为 True 时训练阶段把所有 BN 置 eval(冻结 BN 统计),
+            小数据集微调常用以避免 BN 统计被带偏。
     """
 
     BASE_CHANNELS = (64, 128, 256, 512, 1024)
@@ -27,6 +33,8 @@ class YOLOv5CSPDarknet(BaseModule):
                  deepen_factor: float = 1.0,
                  widen_factor: float = 1.0,
                  out_indices: Sequence[int] = (2, 3, 4),
+                 frozen_stages: int = -1,
+                 norm_eval: bool = False,
                  init_cfg=None):
         super().__init__(init_cfg=init_cfg)
         if deepen_factor <= 0 or widen_factor <= 0:
@@ -36,7 +44,12 @@ class YOLOv5CSPDarknet(BaseModule):
         if not set(out_indices).issubset({2, 3, 4}):
             raise ValueError(
                 f'out_indices 必须是 (2,3,4) 子集, got {out_indices}')
+        if not -1 <= frozen_stages <= 4:
+            raise ValueError(
+                f'frozen_stages 必须在 [-1, 4], got {frozen_stages}')
         self.out_indices = tuple(out_indices)
+        self.frozen_stages = frozen_stages
+        self.norm_eval = norm_eval
 
         channels = [make_divisible(c * widen_factor, 8)
                     for c in self.BASE_CHANNELS]
@@ -62,6 +75,30 @@ class YOLOv5CSPDarknet(BaseModule):
             Conv(channels[3], channels[4], k=3, s=2),
             C3(channels[4], channels[4], n=n_blocks[3]),
             SPPF(channels[4], channels[4], k=5))
+
+        self._freeze_stages()
+
+    def _freeze_stages(self) -> None:
+        """冻结 stem 及前 frozen_stages 个 stage:停梯度 + BN 转 eval。"""
+        if self.frozen_stages < 0:
+            return
+        # 索引 0=stem, 1..4=stage1..stage4,冻结 [0, frozen_stages]
+        stages = [self.stem, self.stage1, self.stage2, self.stage3,
+                  self.stage4]
+        for m in stages[:self.frozen_stages + 1]:
+            m.eval()
+            for p in m.parameters():
+                p.requires_grad = False
+
+    def train(self, mode: bool = True) -> 'YOLOv5CSPDarknet':
+        """重写以保证冻结层始终 eval,并按需冻结所有 BN 统计。"""
+        super().train(mode)
+        self._freeze_stages()
+        if mode and self.norm_eval:
+            for m in self.modules():
+                if isinstance(m, _BatchNorm):
+                    m.eval()
+        return self
 
     def forward(self, x: Tensor) -> Tuple[Tensor, ...]:
         outs = []
