@@ -23,10 +23,8 @@ from mmengine.config import Config
 from mmengine.registry import init_default_scope
 
 import mmaivision  # noqa: F401  触发 registry 注册
+from common import draw_instances
 from mmaivision.registry import DATASETS
-
-PALETTE = [(0, 255, 0), (0, 128, 255), (255, 0, 0), (0, 0, 255),
-           (255, 0, 255), (255, 255, 0), (128, 0, 255), (0, 215, 255)]
 
 
 def parse_args():
@@ -68,21 +66,6 @@ def to_bgr_image(inputs):
     return np.ascontiguousarray(img.transpose(1, 2, 0))
 
 
-def draw(img, bboxes, labels, masks, class_names, alpha):
-    overlay = img.copy()
-    for box, c, m in zip(bboxes, labels, masks):
-        color = PALETTE[int(c) % len(PALETTE)]
-        if m is not None and m.any():
-            overlay[m] = color
-        x1, y1, x2, y2 = [int(v) for v in box]
-        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
-        name = class_names[int(c)] if int(c) < len(class_names) else str(c)
-        cv2.putText(img, name, (x1, max(0, y1 - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-    cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
-    return img
-
-
 def main():
     args = parse_args()
     cfg = Config.fromfile(args.config)
@@ -115,7 +98,8 @@ def main():
             masks = gi.masks.numpy().astype(bool)
         else:
             masks = [None] * len(bboxes)
-        vis = draw(img.copy(), bboxes, labels, masks, class_names, args.alpha)
+        vis = draw_instances(img.copy(), bboxes, labels, class_names,
+                             masks=masks, alpha=args.alpha)
         out_path = osp.join(args.out_dir, f'aug_{idx:05d}.jpg')
         cv2.imwrite(out_path, vis)
         print(f'  [{idx}] {len(bboxes)} 个实例 -> {out_path}')
