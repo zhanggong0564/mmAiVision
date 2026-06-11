@@ -180,9 +180,10 @@ class LabelmeDetMetric(BaseMetric):
 
         metrics = {}
         metrics['mAP'] = float(np.mean(per_thr_map)) if per_thr_map else 0.0
-        if any(abs(t - 0.5) < 1e-6 for t in self.iou_thrs):
-            i = [abs(t - 0.5) < 1e-6 for t in self.iou_thrs].index(True)
-            metrics['mAP_50'] = per_thr_map[i]
+        for i, t in enumerate(self.iou_thrs):
+            if abs(t - 0.5) < 1e-6:
+                metrics['mAP_50'] = per_thr_map[i]
+                break
         for name, ap in per_class_ap50.items():
             metrics[f'AP50_{name}'] = ap
 
@@ -322,9 +323,10 @@ class LabelmeSegMetric(BaseMetric):
 
         metrics = {}
         metrics['mAP'] = float(np.mean(per_thr_map)) if per_thr_map else 0.0
-        if any(abs(t - 0.5) < 1e-6 for t in self.iou_thrs):
-            i = [abs(t - 0.5) < 1e-6 for t in self.iou_thrs].index(True)
-            metrics['mAP_50'] = per_thr_map[i]
+        for i, t in enumerate(self.iou_thrs):
+            if abs(t - 0.5) < 1e-6:
+                metrics['mAP_50'] = per_thr_map[i]
+                break
         for name, ap in per_class_ap50.items():
             metrics[f'AP50_{name}'] = ap
         # 逐类跨阈值平均 AP(单阈值时等同该类 AP50,多阈值时为 COCO 风格逐类 mAP)
