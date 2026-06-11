@@ -7,18 +7,6 @@ from mmaivision.registry import HOOKS
 
 
 @HOOKS.register_module()
-class CustomHook(Hook):
-    """Subclass of `mmengine.Hook`.
-
-    Warning:
-        The class attribute ``priority`` will influence the excutation sequence
-        of other hooks.
-    """
-    priority = 'NORMAL'
-    ...
-
-
-@HOOKS.register_module()
 class PipelineSwitchHook(Hook):
     """到指定 epoch 切换训练 pipeline,用于 YOLOv5 的 ``close_mosaic``。
 
