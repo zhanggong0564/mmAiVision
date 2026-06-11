@@ -68,27 +68,17 @@ WEIGHT_INITIALIZERS = Registry(
     locations=['mmaivision.models'])
 
 # manage all kinds of optimizers like `SGD` and `Adam`
-OPTIMIZERS = Registry(
-    'optimizer',
-    parent=MMENGINE_OPTIMIZERS,
-    locations=['mmaivision.engine.optimizers'])
+OPTIMIZERS = Registry('optimizer', parent=MMENGINE_OPTIMIZERS)
 
 # manage optimizer wrapper
-OPTIM_WRAPPERS = Registry(
-    'optim_wrapper',
-    parent=MMENGINE_OPTIM_WRAPPERS,
-    locations=['mmaivision.engine.optim_wrappers'])
+OPTIM_WRAPPERS = Registry('optim_wrapper', parent=MMENGINE_OPTIM_WRAPPERS)
 
 # manage constructors that customize the optimization hyperparameters.
 OPTIM_WRAPPER_CONSTRUCTORS = Registry(
-    'optimizer constructor',
-    parent=MMENGINE_OPTIM_WRAPPER_CONSTRUCTORS,
-    locations=['mmaivision.engine.optim_wrapper_constructors'])
+    'optimizer constructor', parent=MMENGINE_OPTIM_WRAPPER_CONSTRUCTORS)
 # manage all kinds of parameter schedulers like `MultiStepLR`
 PARAM_SCHEDULERS = Registry(
-    'parameter scheduler',
-    parent=MMENGINE_PARAM_SCHEDULERS,
-    locations=['mmaivision.engine.schedulers'])
+    'parameter scheduler', parent=MMENGINE_PARAM_SCHEDULERS)
 # manage all kinds of metrics
 METRICS = Registry(
     'metric',
