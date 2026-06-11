@@ -113,8 +113,56 @@ class YOLOv5Head(BaseModule):
         self.convs = nn.ModuleList(
             [nn.Conv2d(c, out_c, kernel_size=1) for c in in_channels])
 
+    @property
+    def num_out_attrib(self) -> int:
+        """每 anchor 输出维数(det: nc+5;seg 子类额外加 nm)。"""
+        return self.num_classes + 5
+
     def forward(self, feats: Tuple[Tensor, ...]) -> List[Tensor]:
         return [conv(f) for conv, f in zip(self.convs, feats)]
+
+    def _build_assignments(self, pred_maps, batch_gt_instances):
+        """grid_priors + assigner;返回 (anchors_for_assigner, assignments)。"""
+        featmap_sizes = [(p.shape[2], p.shape[3]) for p in pred_maps]
+        anchors_per_layer = self.prior_generator.grid_priors(
+            featmap_sizes,
+            device=pred_maps[0].device, dtype=pred_maps[0].dtype)
+        # grid_priors 返回 (na, ny, nx, 2);assigner 期望 (na, 2)
+        anchors_for_assigner = [a[:, 0, 0, :] for a in anchors_per_layer]
+        assignments = self.assigner(
+            batch_gt_instances, anchors_for_assigner, featmap_sizes)
+        return anchors_for_assigner, assignments
+
+    def _pos_box_cls_loss(self, raw, a, matched_anchor, obj_target):
+        """单层正样本 bbox CIoU / cls BCE,并把 CIoU 写入 obj_target。
+
+        Returns:
+            (loss_bbox, loss_cls, pos):loss_cls 在单类时为 None;pos 为
+            正样本原始输出 ``(M, num_out_attrib)``,供子类取 mask 系数。
+        """
+        dtype = raw.dtype
+        nc = self.num_classes
+        pos = raw[a['img_idx'], a['anchor_idx'], a['grid_y'], a['grid_x']]
+        pos_xy = pos[:, 0:2].sigmoid() * 2 - 0.5
+        pos_wh = (pos[:, 2:4].sigmoid() * 2) ** 2 * matched_anchor
+
+        grid_xy_int = torch.stack(
+            [a['grid_x'].to(dtype), a['grid_y'].to(dtype)], dim=-1)
+        pred_xyxy = _cxcywh_to_xyxy(torch.cat([pos_xy, pos_wh], dim=-1))
+        target_xyxy = _cxcywh_to_xyxy(torch.cat(
+            [a['gt_xy'] - grid_xy_int, a['gt_wh']], dim=-1))
+        ciou = bbox_ciou(pred_xyxy, target_xyxy)
+        loss_bbox = (1.0 - ciou).mean()
+
+        obj_target[a['img_idx'], a['anchor_idx'],
+                   a['grid_y'], a['grid_x']] = ciou.detach().clamp(0)
+
+        loss_cls = None
+        if nc > 1:
+            cls_target = F.one_hot(a['gt_class'], num_classes=nc).to(dtype)
+            loss_cls = F.binary_cross_entropy_with_logits(
+                pos[:, 5:5 + nc], cls_target).mean()
+        return loss_bbox, loss_cls, pos
 
     def loss_by_feat(self,
                      pred_maps: List[Tensor],
@@ -135,19 +183,13 @@ class YOLOv5Head(BaseModule):
             f'batch_gt_instances 长度 {len(batch_gt_instances)} ' \
             f'!= pred batch {B}'
 
-        nc = self.num_classes
         na = self.num_base_priors
         device = pred_maps[0].device
         dtype = pred_maps[0].dtype
         del batch_img_metas
 
-        featmap_sizes = [(p.shape[2], p.shape[3]) for p in pred_maps]
-        anchors_per_layer = self.prior_generator.grid_priors(
-            featmap_sizes, device=device, dtype=dtype)
-        # grid_priors 返回 (na, ny, nx, 2);assigner 期望 (na, 2)
-        anchors_for_assigner = [a[:, 0, 0, :] for a in anchors_per_layer]
-        assignments = self.assigner(
-            batch_gt_instances, anchors_for_assigner, featmap_sizes)
+        anchors_for_assigner, assignments = self._build_assignments(
+            pred_maps, batch_gt_instances)
 
         loss_bbox = torch.zeros((), device=device, dtype=dtype)
         loss_obj = torch.zeros((), device=device, dtype=dtype)
@@ -156,39 +198,20 @@ class YOLOv5Head(BaseModule):
 
         for i, raw_map in enumerate(pred_maps):
             Hi, Wi = raw_map.shape[2], raw_map.shape[3]
-            raw = raw_map.view(B, na, nc + 5, Hi, Wi).permute(
+            raw = raw_map.view(B, na, self.num_out_attrib, Hi, Wi).permute(
                 0, 1, 3, 4, 2).contiguous()  # (B, na, Hi, Wi, nc+5)
 
             a = assignments[i]
-            M = a['img_idx'].numel()
             obj_target = torch.zeros(
                 (B, na, Hi, Wi), device=device, dtype=dtype)
 
-            if M > 0:
+            if a['img_idx'].numel() > 0:
                 matched_anchor = anchors_for_assigner[i][a['anchor_idx']]
-                pos = raw[a['img_idx'], a['anchor_idx'],
-                          a['grid_y'], a['grid_x']]
-                pos_xy = pos[:, 0:2].sigmoid() * 2 - 0.5
-                pos_wh = (pos[:, 2:4].sigmoid() * 2) ** 2 * matched_anchor
-                pos_cls = pos[:, 5:]
-
-                grid_xy_int = torch.stack(
-                    [a['grid_x'].to(dtype), a['grid_y'].to(dtype)], dim=-1)
-                pred_cxcywh = torch.cat([pos_xy, pos_wh], dim=-1)
-                target_cxcywh = torch.cat(
-                    [a['gt_xy'] - grid_xy_int, a['gt_wh']], dim=-1)
-                pred_xyxy = _cxcywh_to_xyxy(pred_cxcywh)
-                target_xyxy = _cxcywh_to_xyxy(target_cxcywh)
-                ciou = bbox_ciou(pred_xyxy, target_xyxy)
-                loss_bbox = loss_bbox + (1.0 - ciou).mean()
-
-                obj_target[a['img_idx'], a['anchor_idx'],
-                           a['grid_y'], a['grid_x']] = ciou.detach().clamp(0)
-
-                if nc > 1:
-                    cls_target = F.one_hot(
-                        a['gt_class'], num_classes=nc).to(dtype)
-                    loss_cls = loss_cls + bce(pos_cls, cls_target).mean()
+                lb, lc, _ = self._pos_box_cls_loss(
+                    raw, a, matched_anchor, obj_target)
+                loss_bbox = loss_bbox + lb
+                if lc is not None:
+                    loss_cls = loss_cls + lc
 
             loss_obj_layer = bce(raw[..., 4], obj_target).mean()
             loss_obj = loss_obj + loss_obj_layer * self.obj_level_weights[i]
@@ -198,16 +221,21 @@ class YOLOv5Head(BaseModule):
         loss_cls = loss_cls * self.loss_cls_weight * B
         return dict(loss_bbox=loss_bbox, loss_obj=loss_obj, loss_cls=loss_cls)
 
-    def predict_by_feat(self,
-                        pred_maps: List[Tensor],
-                        batch_img_metas) -> list:
-        """解码 + per-image NMS,返回 List[InstanceData]。"""
+    def _decode_pred_maps(self, pred_maps):
+        """三层 raw → 输入图坐标 xyxy / score(/ 额外通道)。
+
+        Returns:
+            (all_xyxy, all_scores, all_extra):形如 ``(B, N, 4/nc/n_extra)``;
+            无额外通道(det)时 all_extra 为 None。额外通道(seg 的 mask 系数)
+            不过 sigmoid。
+        """
         B = pred_maps[0].shape[0]
         nc = self.num_classes
         na = self.num_base_priors
+        no = self.num_out_attrib
+        n_extra = no - nc - 5
         device = pred_maps[0].device
         dtype = pred_maps[0].dtype
-        del batch_img_metas
 
         featmap_sizes = [(p.shape[2], p.shape[3]) for p in pred_maps]
         anchors = self.prior_generator.grid_priors(
@@ -215,52 +243,57 @@ class YOLOv5Head(BaseModule):
         grid_xy = self.prior_generator.grid_xy(
             featmap_sizes, device=device, dtype=dtype)
 
-        all_xyxy = []
-        all_scores = []
+        all_xyxy, all_scores, all_extra = [], [], []
         for i, raw_map in enumerate(pred_maps):
             Hi, Wi = raw_map.shape[2], raw_map.shape[3]
             stride = self.strides[i]
-            raw = raw_map.view(B, na, nc + 5, Hi, Wi).permute(
+            raw = raw_map.view(B, na, no, Hi, Wi).permute(
                 0, 1, 3, 4, 2).contiguous()
-            sig = torch.sigmoid(raw)
+            sig = torch.sigmoid(raw[..., :5 + nc])
             xy = (sig[..., 0:2] * 2 - 0.5
                   + grid_xy[i].view(1, 1, Hi, Wi, 2)) * stride
             wh = (sig[..., 2:4] * 2) ** 2 \
                 * anchors[i].view(1, na, Hi, Wi, 2) * stride
-            obj = sig[..., 4:5]
-            cls = sig[..., 5:]
-            score = obj * cls
+            score = sig[..., 4:5] * sig[..., 5:5 + nc]
 
             x1y1 = xy - wh / 2
             x2y2 = xy + wh / 2
-            xyxy = torch.cat([x1y1, x2y2], dim=-1).view(B, -1, 4)
-            score = score.view(B, -1, nc)
-            all_xyxy.append(xyxy)
-            all_scores.append(score)
+            all_xyxy.append(
+                torch.cat([x1y1, x2y2], dim=-1).view(B, -1, 4))
+            all_scores.append(score.view(B, -1, nc))
+            if n_extra:
+                all_extra.append(raw[..., 5 + nc:].reshape(B, -1, n_extra))
 
-        all_xyxy = torch.cat(all_xyxy, dim=1)
-        all_scores = torch.cat(all_scores, dim=1)
+        return (torch.cat(all_xyxy, dim=1),
+                torch.cat(all_scores, dim=1),
+                torch.cat(all_extra, dim=1) if n_extra else None)
 
-        results = []
-        for b in range(B):
-            scores_b, labels_b = all_scores[b].max(dim=-1)
-            keep = scores_b > self.score_thr
-            bboxes_kept = all_xyxy[b][keep]
-            scores_kept = scores_b[keep]
-            labels_kept = labels_b[keep]
-            if bboxes_kept.shape[0] == 0:
-                results.append(InstanceData(
-                    bboxes=torch.zeros(0, 4, device=device, dtype=dtype),
-                    scores=torch.zeros(0, device=device, dtype=dtype),
-                    labels=torch.zeros(0, dtype=torch.int64, device=device)))
-                continue
+    def _nms_select(self, xyxy_b, scores_b):
+        """单图分数过滤 + NMS。
+
+        Returns:
+            (sel, scores, labels):sel 为筛后在原 N 维上的索引,供调用方
+            同步切片 bbox / mask 系数等并列张量。
+        """
+        scores, labels = scores_b.max(dim=-1)
+        sel = (scores > self.score_thr).nonzero(as_tuple=False).squeeze(1)
+        if sel.numel() > 0:
             keep_idx = batched_nms(
-                bboxes_kept, scores_kept, labels_kept, self.nms_iou_thr)
-            keep_idx = keep_idx[:self.max_per_img]
+                xyxy_b[sel], scores[sel], labels[sel], self.nms_iou_thr)
+            sel = sel[keep_idx[:self.max_per_img]]
+        return sel, scores[sel], labels[sel]
+
+    def predict_by_feat(self,
+                        pred_maps: List[Tensor],
+                        batch_img_metas) -> list:
+        """解码 + per-image NMS,返回 List[InstanceData]。"""
+        del batch_img_metas
+        all_xyxy, all_scores, _ = self._decode_pred_maps(pred_maps)
+        results = []
+        for b in range(all_xyxy.shape[0]):
+            sel, scores, labels = self._nms_select(all_xyxy[b], all_scores[b])
             results.append(InstanceData(
-                bboxes=bboxes_kept[keep_idx],
-                scores=scores_kept[keep_idx],
-                labels=labels_kept[keep_idx]))
+                bboxes=all_xyxy[b][sel], scores=scores, labels=labels))
         return results
 
 
@@ -327,6 +360,10 @@ class YOLOv5SegHead(YOLOv5Head):
             [nn.Conv2d(c, out_c, kernel_size=1) for c in in_channels])
         self.proto = Proto(in_channels[0], proto_channels, num_masks)
 
+    @property
+    def num_out_attrib(self) -> int:
+        return self.num_classes + 5 + self.num_masks
+
     def forward(self, feats):
         pred_maps = [conv(f) for conv, f in zip(self.convs, feats)]
         proto = self.proto(feats[0])
@@ -350,18 +387,12 @@ class YOLOv5SegHead(YOLOv5Head):
             f'batch_gt_instances 长度 {len(batch_gt_instances)} != pred batch {B}'
         nc = self.num_classes
         na = self.num_base_priors
-        nm = self.num_masks
-        no = nc + 5 + nm
         device = pred_maps[0].device
         dtype = pred_maps[0].dtype
         del batch_img_metas
 
-        featmap_sizes = [(p.shape[2], p.shape[3]) for p in pred_maps]
-        anchors_per_layer = self.prior_generator.grid_priors(
-            featmap_sizes, device=device, dtype=dtype)
-        anchors_for_assigner = [a[:, 0, 0, :] for a in anchors_per_layer]
-        assignments = self.assigner(
-            batch_gt_instances, anchors_for_assigner, featmap_sizes)
+        anchors_for_assigner, assignments = self._build_assignments(
+            pred_maps, batch_gt_instances)
 
         # 拼 batch 全部 gt mask,顺序须与 assigner 的 gt_idx 一致
         # (assigner 跳过 bboxes.numel()==0 的图,这里同样跳过)
@@ -386,44 +417,24 @@ class YOLOv5SegHead(YOLOv5Head):
 
         for i, raw_map in enumerate(pred_maps):
             Hi, Wi = raw_map.shape[2], raw_map.shape[3]
-            raw = raw_map.view(B, na, no, Hi, Wi).permute(
+            raw = raw_map.view(B, na, self.num_out_attrib, Hi, Wi).permute(
                 0, 1, 3, 4, 2).contiguous()  # (B, na, Hi, Wi, no)
 
             a = assignments[i]
-            M = a['img_idx'].numel()
             obj_target = torch.zeros(
                 (B, na, Hi, Wi), device=device, dtype=dtype)
 
-            if M > 0:
+            if a['img_idx'].numel() > 0:
                 matched_anchor = anchors_for_assigner[i][a['anchor_idx']]
-                pos = raw[a['img_idx'], a['anchor_idx'],
-                          a['grid_y'], a['grid_x']]
-                pos_xy = pos[:, 0:2].sigmoid() * 2 - 0.5
-                pos_wh = (pos[:, 2:4].sigmoid() * 2) ** 2 * matched_anchor
-                pos_cls = pos[:, 5:5 + nc]
-                pos_coeff = pos[:, 5 + nc:]
-
-                grid_xy_int = torch.stack(
-                    [a['grid_x'].to(dtype), a['grid_y'].to(dtype)], dim=-1)
-                pred_cxcywh = torch.cat([pos_xy, pos_wh], dim=-1)
-                target_cxcywh = torch.cat(
-                    [a['gt_xy'] - grid_xy_int, a['gt_wh']], dim=-1)
-                pred_xyxy = _cxcywh_to_xyxy(pred_cxcywh)
-                target_xyxy = _cxcywh_to_xyxy(target_cxcywh)
-                ciou = bbox_ciou(pred_xyxy, target_xyxy)
-                loss_bbox = loss_bbox + (1.0 - ciou).mean()
-
-                obj_target[a['img_idx'], a['anchor_idx'],
-                           a['grid_y'], a['grid_x']] = ciou.detach().clamp(0)
-
-                if nc > 1:
-                    cls_target = F.one_hot(
-                        a['gt_class'], num_classes=nc).to(dtype)
-                    loss_cls = loss_cls + bce(pos_cls, cls_target).mean()
+                lb, lc, pos = self._pos_box_cls_loss(
+                    raw, a, matched_anchor, obj_target)
+                loss_bbox = loss_bbox + lb
+                if lc is not None:
+                    loss_cls = loss_cls + lc
 
                 if all_masks is not None:
                     loss_mask = loss_mask + self._mask_loss_layer(
-                        pos_coeff, a['gt_idx'], a['img_idx'], proto,
+                        pos[:, 5 + nc:], a['gt_idx'], a['img_idx'], proto,
                         all_masks, self.strides[i], a['gt_xy'], a['gt_wh'])
 
             loss_obj_layer = bce(raw[..., 4], obj_target).mean()
@@ -463,72 +474,25 @@ class YOLOv5SegHead(YOLOv5Head):
         return (self._crop_mask(loss, boxes).sum(dim=(1, 2)) / area).mean()
 
     def predict_by_feat(self, pred_maps, proto, batch_img_metas):
-        B = pred_maps[0].shape[0]
-        nc = self.num_classes
-        na = self.num_base_priors
         nm = self.num_masks
-        no = nc + 5 + nm
         device = pred_maps[0].device
-        dtype = pred_maps[0].dtype
         del batch_img_metas
 
-        featmap_sizes = [(p.shape[2], p.shape[3]) for p in pred_maps]
-        anchors = self.prior_generator.grid_priors(
-            featmap_sizes, device=device, dtype=dtype)
-        grid_xy = self.prior_generator.grid_xy(
-            featmap_sizes, device=device, dtype=dtype)
-
-        all_xyxy, all_scores, all_coeff = [], [], []
-        for i, raw_map in enumerate(pred_maps):
-            Hi, Wi = raw_map.shape[2], raw_map.shape[3]
-            stride = self.strides[i]
-            raw = raw_map.view(B, na, no, Hi, Wi).permute(
-                0, 1, 3, 4, 2).contiguous()
-            sig = torch.sigmoid(raw[..., :5 + nc])
-            xy = (sig[..., 0:2] * 2 - 0.5
-                  + grid_xy[i].view(1, 1, Hi, Wi, 2)) * stride
-            wh = (sig[..., 2:4] * 2) ** 2 \
-                * anchors[i].view(1, na, Hi, Wi, 2) * stride
-            obj = sig[..., 4:5]
-            cls = sig[..., 5:5 + nc]
-            score = obj * cls
-            coeff = raw[..., 5 + nc:]                 # 系数不过 sigmoid
-            x1y1 = xy - wh / 2
-            x2y2 = xy + wh / 2
-            all_xyxy.append(
-                torch.cat([x1y1, x2y2], dim=-1).view(B, -1, 4))
-            all_scores.append(score.view(B, -1, nc))
-            all_coeff.append(coeff.reshape(B, -1, nm))
-
-        all_xyxy = torch.cat(all_xyxy, dim=1)
-        all_scores = torch.cat(all_scores, dim=1)
-        all_coeff = torch.cat(all_coeff, dim=1)
+        all_xyxy, all_scores, all_coeff = self._decode_pred_maps(pred_maps)
 
         Hm, Wm = proto.shape[2], proto.shape[3]
         in_h, in_w = Hm * self.mask_ratio, Wm * self.mask_ratio
         results = []
-        for b in range(B):
-            scores_b, labels_b = all_scores[b].max(dim=-1)
-            keep = scores_b > self.score_thr
-            boxes = all_xyxy[b][keep]
-            sc = scores_b[keep]
-            lb = labels_b[keep]
-            cf = all_coeff[b][keep]
-            if boxes.shape[0] == 0:
+        for b in range(all_xyxy.shape[0]):
+            sel, sc, lb = self._nms_select(all_xyxy[b], all_scores[b])
+            boxes = all_xyxy[b][sel]
+            if sel.numel() == 0:
                 results.append(InstanceData(
-                    bboxes=torch.zeros(0, 4, device=device, dtype=dtype),
-                    scores=torch.zeros(0, device=device, dtype=dtype),
-                    labels=torch.zeros(0, dtype=torch.int64, device=device),
+                    bboxes=boxes, scores=sc, labels=lb,
                     masks=torch.zeros(0, in_h, in_w, dtype=torch.bool,
                                       device=device)))
                 continue
-            keep_idx = batched_nms(boxes, sc, lb, self.nms_iou_thr)
-            keep_idx = keep_idx[:self.max_per_img]
-            boxes = boxes[keep_idx]
-            sc = sc[keep_idx]
-            lb = lb[keep_idx]
-            cf = cf[keep_idx]
-
+            cf = all_coeff[b][sel]
             proto_b = proto[b].view(nm, -1)                  # (nm, Hm*Wm)
             masks = (cf @ proto_b).sigmoid().view(-1, Hm, Wm)
             masks = F.interpolate(
