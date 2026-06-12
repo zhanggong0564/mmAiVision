@@ -65,6 +65,19 @@ class TestPackDetInputs:
         assert ds.gt_instances.labels.dtype == torch.int64
         assert 'img_id' in ds.metainfo and 'scale_factor' in ds.metainfo
 
+    def test_pack_filters_ignored_instances(self):
+        from mmaivision.datasets.transforms import (LetterResize,
+                                                    LoadLabelmeAnnotations,
+                                                    PackDetInputs)
+        res = _sample_results()
+        res['instances'][1]['ignore_flag'] = 1
+        res = LoadLabelmeAnnotations().transform(res)
+        res = LetterResize(scale=640).transform(res)
+        out = PackDetInputs().transform(res)
+        ds = out['data_samples']
+        assert ds.gt_instances.bboxes.shape == (1, 4)
+        assert ds.gt_instances.labels.tolist() == [0]
+
 
 class TestDataPreprocessor:
     def test_normalize_and_batch_input_shape(self):

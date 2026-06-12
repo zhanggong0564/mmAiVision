@@ -114,6 +114,18 @@ class TestPolygonToMask:
         assert masks[0].sum() > 0
         assert masks[1].sum() == 0
 
+    def test_box_as_mask_rasterizes_rectangle(self):
+        from mmaivision.datasets.transforms import (LetterResize, PackDetInputs,
+                                                    LoadLabelmeAnnotations)
+        res = LoadLabelmeAnnotations(box_as_mask=True).transform(
+            self._results_with_polygon())
+        res = LetterResize(scale=100).transform(res)
+        out = PackDetInputs().transform(res)
+        masks = out['data_samples'].gt_instances.masks
+        assert masks.shape == (2, 100, 100)
+        assert masks[0].sum() > 0
+        assert masks[1].sum() > 0
+
 
 def _seg_head(nc=2):
     from mmaivision.models.yolov5.head import YOLOv5SegHead
