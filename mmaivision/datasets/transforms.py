@@ -76,6 +76,9 @@ class LoadLabelmeAnnotations(BaseTransform):
         - ``gt_polygons``: ``list`` of ``(P, 2)`` float32 多边形点;无 polygon 的实例为 ``(0, 2)``。
     """
 
+    def __init__(self, box_as_mask: bool = False):
+        self.box_as_mask = box_as_mask
+
     def transform(self, results: dict) -> dict:
         instances = results.get('instances', [])
         bboxes = np.array(
@@ -96,6 +99,11 @@ class LoadLabelmeAnnotations(BaseTransform):
             if m and len(m) > 0 and len(m[0]) >= 6:
                 # 仅取首条轮廓 m[0],暂不支持带孔多边形(多轮廓)。
                 pts = np.array(m[0], dtype=np.float32).reshape(-1, 2)
+            elif self.box_as_mask:
+                x1, y1, x2, y2 = inst['bbox']
+                pts = np.array(
+                    [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
+                    dtype=np.float32)
             else:
                 pts = np.zeros((0, 2), dtype=np.float32)
             polygons.append(pts)
@@ -678,6 +686,9 @@ class PackDetInputs(BaseTransform):
         self.meta_keys = tuple(meta_keys) if meta_keys else self.META_KEYS
 
     def transform(self, results: dict) -> dict:
+        if 'gt_ignore_flags' in results:
+            _filter_instances(results, ~results['gt_ignore_flags'])
+
         img = results['img']
         if img.ndim == 2:
             img = img[..., None]

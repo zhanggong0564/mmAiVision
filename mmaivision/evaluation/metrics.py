@@ -80,6 +80,26 @@ def _mask_iou_matrix(masks1: np.ndarray, masks2: np.ndarray) -> np.ndarray:
     return inter / union
 
 
+def _as_bool_tensor(x) -> torch.Tensor:
+    t = x if isinstance(x, torch.Tensor) else torch.as_tensor(np.asarray(x))
+    return t.bool()
+
+
+def _mask_iou_matrix_torch(masks1: torch.Tensor,
+                           masks2: torch.Tensor) -> torch.Tensor:
+    """Torch 版 mask IoU,避免评估时把 dense masks 提前搬到 CPU。"""
+    if masks1.shape[0] == 0 or masks2.shape[0] == 0:
+        return masks1.new_zeros((masks1.shape[0], masks2.shape[0]),
+                                dtype=torch.float32)
+    a = masks1.reshape(masks1.shape[0], -1).float()
+    b = masks2.reshape(masks2.shape[0], -1).float()
+    inter = a @ b.t()
+    area1 = a.sum(dim=1)[:, None]
+    area2 = b.sum(dim=1)[None, :]
+    union = (area1 + area2 - inter).clamp(min=1e-7)
+    return inter / union
+
+
 @METRICS.register_module()
 class LabelmeDetMetric(BaseMetric):
     """VOC 风格检测 mAP 指标。
@@ -236,44 +256,62 @@ class LabelmeSegMetric(BaseMetric):
         for ds in data_samples:
             pred = ds['pred_instances']
             gt = ds['gt_instances']
-            pred_scores = _to_numpy(pred['scores']).reshape(-1)
-            pred_labels = _to_numpy(pred['labels']).reshape(-1)
+            pred_scores_t = torch.as_tensor(pred['scores']).reshape(-1)
+            pred_labels_t = torch.as_tensor(pred['labels']).reshape(-1).long()
             # 在搬到 CPU 之前先在原设备(通常 GPU)上降采样,缩小后再转 numpy:
             # 既减少 GPU→CPU 传输量,又把后续 mask IoU matmul 的规模降一个量级。
-            pred_masks = _to_numpy(
+            pred_masks = _as_bool_tensor(
                 _resize_masks_for_eval(pred['masks'], self.mask_eval_size)
-            ).astype(bool)
-            gt_masks = _to_numpy(
+            )
+            gt_masks = _as_bool_tensor(
                 _resize_masks_for_eval(gt['masks'], self.mask_eval_size)
-            ).astype(bool)
-            gt_labels = _to_numpy(gt['labels']).reshape(-1)
+            )
+            device = pred_masks.device
+            pred_scores_t = pred_scores_t.to(device)
+            pred_labels_t = pred_labels_t.to(device)
+            gt_masks = gt_masks.to(device)
+            gt_labels_t = torch.as_tensor(
+                gt['labels']).reshape(-1).long().to(device)
 
-            num_pred = pred_scores.shape[0]
-            tp = np.zeros((n_thr, num_pred), dtype=bool)
-            gt_count = np.bincount(
-                gt_labels.astype(np.int64),
+            num_pred = pred_scores_t.shape[0]
+            tp = torch.zeros((n_thr, num_pred), dtype=torch.bool,
+                             device=device)
+            gt_count = torch.bincount(
+                gt_labels_t.clamp(min=0),
                 minlength=self.num_classes)[:self.num_classes]
 
-            for cls in range(self.num_classes):
-                p_idx = np.nonzero(pred_labels == cls)[0]
-                g_sel = gt_labels == cls
-                if p_idx.size == 0 or not g_sel.any():
+            if num_pred or gt_labels_t.numel():
+                present = torch.unique(
+                    torch.cat([pred_labels_t, gt_labels_t])).tolist()
+            else:
+                present = []
+            for cls in present:
+                if cls < 0 or cls >= self.num_classes:
+                    continue
+                p_idx = torch.nonzero(
+                    pred_labels_t == cls, as_tuple=False).flatten()
+                g_sel = gt_labels_t == cls
+                if p_idx.numel() == 0 or not bool(g_sel.any()):
                     continue  # 无该类预测,或无该类 GT(预测全记 FP → tp 保持 False)
                 # 该类预测按分数降序(= 全局降序在本图内的投影),逐条贪心匹配
-                order = p_idx[np.argsort(-pred_scores[p_idx], kind='stable')]
-                ious = _mask_iou_matrix(pred_masks[order], gt_masks[g_sel])
+                order = p_idx[torch.argsort(pred_scores_t[p_idx],
+                                            descending=True)]
+                ious = _mask_iou_matrix_torch(pred_masks[order],
+                                              gt_masks[g_sel])
                 for ti, thr in enumerate(self.iou_thrs):
-                    matched = np.zeros(ious.shape[1], dtype=bool)
-                    for rank, gi in enumerate(order):
-                        j = int(np.argmax(ious[rank]))
-                        if ious[rank, j] >= thr and not matched[j]:
+                    matched = torch.zeros(ious.shape[1], dtype=torch.bool,
+                                          device=device)
+                    for rank, gi in enumerate(order.tolist()):
+                        j = int(torch.argmax(ious[rank]).item())
+                        if ious[rank, j] >= thr and not bool(matched[j]):
                             tp[ti, gi] = True
                             matched[j] = True
             self.results.append(dict(
-                pred_scores=pred_scores.astype(np.float32),
-                pred_labels=pred_labels,
-                tp=tp,
-                gt_count=gt_count.astype(np.int64)))
+                pred_scores=pred_scores_t.detach().cpu().numpy().astype(
+                    np.float32),
+                pred_labels=pred_labels_t.detach().cpu().numpy(),
+                tp=tp.cpu().numpy(),
+                gt_count=gt_count.cpu().numpy().astype(np.int64)))
 
     def _ap_per_class(self, results: List[dict], cls: int,
                       thr_idx: int) -> Optional[float]:
