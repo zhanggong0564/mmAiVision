@@ -72,7 +72,7 @@ model = dict(
 # -------------------- 数据 pipeline --------------------
 train_pipeline = [
     dict(type='LoadImageFromFile'),
-    dict(type='LoadLabelmeAnnotations'),
+    dict(type='LoadLabelmeAnnotations', box_as_mask=True),
     dict(type='LetterResize', scale=img_scale, pad_val=114),
     dict(type='PackDetInputs'),
 ]
@@ -92,7 +92,6 @@ train_dataloader = dict(
         metainfo=metainfo,
         filter_cfg=dict(filter_empty_gt=True, min_size=1),
         pipeline=train_pipeline,
-        indices=200,
     ),
 )
 
