@@ -1,0 +1,6 @@
+mmengine
+mmcv>=2.0.0
+numpy
+opencv-python
+torch
+torchvision
